@@ -710,6 +710,7 @@ HistogramCuts SketchContainer::MakeCuts(Context const *ctx, bool is_column_split
     }
   }
 
+  auto secure_vertical = is_column_split && collective::IsEncrypted();
   // Set up output cuts
   for (bst_feature_t i = 0; i < num_columns_; ++i) {
     size_t column_size = std::max(static_cast<size_t>(1ul), this->Column(i).size());
@@ -718,6 +719,11 @@ HistogramCuts SketchContainer::MakeCuts(Context const *ctx, bool is_column_split
       CheckMaxCat(max_values[i].value, column_size);
       h_out_columns_ptr[i + 1] = max_values[i].value + 1;  // includes both max_cat and 0.
     } else {
+      // If vertical and secure mode, we need to sync the max_num_bins across workers
+      // to create the same global number of cut point bins for easier future processing
+      if (secure_vertical) {
+        collective::SafeColl(collective::Allreduce(ctx, &column_size, collective::Op::kMax));
+      }
       h_out_columns_ptr[i + 1] =
           std::min(static_cast<size_t>(column_size), static_cast<size_t>(num_bins_));
     }
@@ -746,6 +752,10 @@ HistogramCuts SketchContainer::MakeCuts(Context const *ctx, bool is_column_split
         out_column[0] = kRtEps;
         assert(out_column.size() == 1);
       }
+      // For secure vertical split, fill all cut values with dummy value
+      if (secure_vertical) {
+        out_column[idx] = kRtEps;
+      }
       return;
     }
 
@@ -765,6 +775,19 @@ HistogramCuts SketchContainer::MakeCuts(Context const *ctx, bool is_column_split
     assert(idx + 1 < in_column.size());
     out_column[idx] = in_column[idx + 1].value;
   });
+
+  if (secure_vertical) {
+    // cut values need to be synced across all workers via Allreduce
+    // To do: apply same inference indexing as CPU, skip for now
+    auto cut_values_device = p_cuts->cut_values_.DeviceSpan();
+    std::vector<float> cut_values_host(cut_values_device.size());
+    dh::CopyDeviceSpanToVector(&cut_values_host, cut_values_device);
+    auto rc = collective::Allreduce(ctx, &cut_values_host, collective::Op::kSum);
+    SafeColl(rc);
+    dh::safe_cuda(cudaMemcpyAsync(cut_values_device.data(), cut_values_host.data(),
+                                  cut_values_device.size() * sizeof(float),
+                                    cudaMemcpyHostToDevice));
+  }
 
   p_cuts->SetCategorical(this->has_categorical_, max_cat);
   timer_.Stop(__func__);

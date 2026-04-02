@@ -8,6 +8,7 @@
 #include <cstdint>  // for int32_t
 #include <cstdlib>  // for getenv
 #include <limits>   // for numeric_limits
+#include <memory>   // for make_shared
 #include <string>   // for string, stoi
 
 #include "../../src/common/common.h"      // for Split
@@ -122,6 +123,12 @@ FederatedComm::FederatedComm(std::int32_t retry, std::chrono::seconds timeout, s
   server_cert = OptionalArg<String>(config, "federated_server_cert_path", server_cert);
   client_key = OptionalArg<String>(config, "federated_client_key_path", client_key);
   client_cert = OptionalArg<String>(config, "federated_client_cert_path", client_cert);
+
+  /**
+   * Hist encryption plugin.
+   */
+  this->plugin_.reset();
+  this->plugin_ = CreateFederatedPlugin(config);
 
   this->Init(parsed[0], std::stoi(parsed[1]), world_size, rank, server_cert, client_key,
              client_cert);

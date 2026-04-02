@@ -145,6 +145,10 @@ bool IsDistributed() noexcept { return GlobalCommGroup()->IsDistributed(); }
   return GlobalCommGroup()->Ctx(nullptr, DeviceOrd::CPU()).IsFederated();
 }
 
+[[nodiscard]] bool IsEncrypted() noexcept {
+  return IsFederated() && GlobalCommGroup()->Ctx(nullptr, DeviceOrd::CPU()).IsEncrypted();
+}
+
 void Print(std::string const& message) {
   auto rc = GlobalCommGroup()->Ctx(nullptr, DeviceOrd::CPU()).LogTracker(message);
   SafeColl(rc);

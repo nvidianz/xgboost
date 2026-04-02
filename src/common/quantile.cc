@@ -493,9 +493,21 @@ auto HostSketchContainer::AllReduce(Context const *ctx, MetaInfo const &info,
   return reduced;
 }
 
-void AddCutPoints(WQSummaryContainer const &summary, size_t max_bin, HistogramCuts *cuts) {
+bool AddCutPoints(Context const *ctx, WQSummaryContainer const &summary, size_t max_bin,
+                  HistogramCuts *cuts, bool secure) {
   size_t required_cuts = std::min(summary.Size(), static_cast<size_t>(max_bin));
+  if (secure) {
+    // Sync required_cuts across workers so all produce the same number of bins.
+    collective::SafeColl(collective::Allreduce(ctx, &required_cuts, collective::Op::kMax));
+  }
   auto &cut_values = cuts->cut_values_.HostVector();
+  // In secure mode, if this worker has no data for this feature, insert NaN placeholders.
+  if (secure && summary.Size() == 0) {
+    for (size_t i = 0; i < required_cuts; ++i) {
+      cut_values.push_back(std::numeric_limits<bst_float>::quiet_NaN());
+    }
+    return true;
+  }
   auto const entries = summary.Entries();
   // Use raw pointer in the cut extraction loop to avoid per-access bounds checks.
   auto const *summary_data = entries.data();
@@ -510,6 +522,7 @@ void AddCutPoints(WQSummaryContainer const &summary, size_t max_bin, HistogramCu
   // This must be bigger than the last observed cut value.
   auto const last = cpt + (std::fabs(cpt) + 1e-5f);
   cut_values.push_back(last);
+  return false;
 }
 
 void AddCategories(std::set<float> const &categories, float *max_cat, HistogramCuts *cuts) {
@@ -566,9 +579,8 @@ HistogramCuts HostSketchContainer::MakeCuts(Context const *ctx, MetaInfo const &
     if (IsCat(feature_types_, fid)) {
       AddCategories(reduced_categories[categorical_index[fid]], &max_cat, p_cuts);
     } else {
-      AddCutPoints(reduced_numerical[fid], max_num_bins, p_cuts);
+      AddCutPoints(ctx, reduced_numerical[fid], max_num_bins, p_cuts, collective::IsEncrypted());
     }
-
     // Ensure that every feature gets at least one quantile point
     CHECK_LE(p_cuts->cut_values_.HostVector().size(), std::numeric_limits<uint32_t>::max());
     auto cut_size = static_cast<uint32_t>(p_cuts->cut_values_.HostVector().size());

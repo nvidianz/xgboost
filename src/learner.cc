@@ -26,7 +26,7 @@
 #include <stack>          // for stack
 #include <string>         // for basic_string, char_traits, operator<, string
 #include <system_error>   // for errc
-#include <unordered_map>  // for operator!=, unordered_map
+#include <tuple>          // for get
 #include <utility>        // for pair, as_const, move, swap
 #include <vector>         // for vector
 
@@ -1321,8 +1321,10 @@ class LearnerImpl : public LearnerIO {
   void GetGradient(HostDeviceVector<float> const& preds, MetaInfo const& info, std::int32_t iter,
                    linalg::Matrix<GradientPair>* out_gpair) {
     out_gpair->Reshape(info.num_row_, this->learner_model_param_.OutputLength());
-    collective::ApplyWithLabels(&ctx_, info, out_gpair->Data(),
-                                [&] { obj_->GetGradient(preds, info, iter, out_gpair); });
+    auto get_grad = [&](linalg::Matrix<GradientPair>* out_gpair) {
+      obj_->GetGradient(preds, info, iter, out_gpair);
+    };
+    collective::BroadcastGradient(Ctx(), info, get_grad, out_gpair);
   }
 
   /*! \brief random number transformation seed. */
