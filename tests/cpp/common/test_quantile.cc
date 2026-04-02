@@ -6,11 +6,19 @@
 #include <gtest/gtest.h>
 
 #include <array>    // for array
+#include <cmath>    // for isnan
 #include <cstdint>  // for int64_t
+#include <limits>   // for numeric_limits
+#include <memory>   // for make_unique, unique_ptr
 
 #include "../../../src/collective/allreduce.h"
 #include "../../../src/data/adapter.h"
-#include "../collective/test_worker.h"  // for TestDistributedGlobal
+#include "../../../src/data/simple_dmatrix.h"  // for SimpleDMatrix
+#include "../collective/test_worker.h"         // for TestDistributedGlobal
+
+#if defined(XGBOOST_USE_FEDERATED)
+#include "../plugin/federated/test_worker.h"  // for TestEncryptedGlobal
+#endif  // defined(XGBOOST_USE_FEDERATED)
 #include "xgboost/context.h"
 
 namespace xgboost::common {
@@ -634,11 +642,103 @@ void DoPropertyColumnSplitQuantile(size_t rows, size_t cols) {
   quantile_test::ValidateContainerCuts(c, sorted_cuts, full_m.get(), columns, slice_start,
                                        slice_end);
 }
+
+#if defined(XGBOOST_USE_FEDERATED)
+void AssertSecureColumnSplitCuts(HistogramCuts const& cuts, std::int32_t rank) {
+  auto const& ptrs = cuts.Ptrs();
+  auto const& vals = cuts.Values();
+  auto const& mins = cuts.MinValues();
+  std::vector<std::uint32_t> expected_ptrs = {0, 1, 4};
+  std::vector<float> expected_vals = {2, 0, 0, 0};
+  std::vector<float> expected_mins = {-1e-5f, 1e-5f};
+  if (rank == 1) {
+    expected_vals = {0, 0.6f, 0.8f, 1.6f};
+    expected_mins = {1e-5f, -1e-5f};
+  }
+
+  EXPECT_EQ(ptrs, expected_ptrs) << "rank: " << rank;
+  ASSERT_EQ(vals.size(), expected_vals.size()) << "rank: " << rank;
+  for (std::size_t i = 0; i < expected_vals.size(); ++i) {
+    if (!std::isnan(vals[i])) {
+      EXPECT_NEAR(vals[i], expected_vals[i], 2e-2f) << "rank: " << rank << ", i: " << i;
+    }
+  }
+
+  ASSERT_EQ(mins.size(), expected_mins.size()) << "rank: " << rank;
+  for (std::size_t i = 0; i < expected_mins.size(); ++i) {
+    EXPECT_FLOAT_EQ(mins[i], expected_mins[i]) << "rank: " << rank << ", i: " << i;
+  }
+}
+
+void DoTestColSplitQuantileSecure() {
+  Context ctx;
+  auto const world = collective::GetWorldSize();
+  auto const rank = collective::GetRank();
+  ASSERT_TRUE(collective::IsEncrypted());
+
+  constexpr std::size_t cols = 2;
+  constexpr std::size_t rows = 3;
+  auto m = std::unique_ptr<DMatrix>{[=]() {
+    std::vector<float> data = {1, 1, 0.6f, 0.4f, 0.8f};
+    std::vector<unsigned> row_idx = {0, 2, 0, 1, 2};
+    std::vector<std::size_t> col_ptr = {0, 2, 5};
+    data::CSCAdapter adapter{col_ptr.data(), row_idx.data(), data.data(), cols, rows};
+    auto dmat = std::make_unique<data::SimpleDMatrix>(
+        &adapter, std::numeric_limits<float>::quiet_NaN(), 1);
+    EXPECT_EQ(dmat->Info().num_col_, cols);
+    EXPECT_EQ(dmat->Info().num_row_, rows);
+    EXPECT_EQ(dmat->Info().num_nonzero_, 5);
+    return dmat->SliceCol(world, rank);
+  }()};
+
+  std::vector<bst_idx_t> column_size(cols, 0);
+  auto const slice_size = cols / world;
+  auto const slice_start = slice_size * rank;
+  auto const slice_end = (rank == world - 1) ? cols : slice_start + slice_size;
+  for (auto i = slice_start; i < slice_end; ++i) {
+    column_size[i] = rows;
+  }
+
+  auto constexpr n_bins = 64;
+  m->Info().data_split_mode = DataSplitMode::kCol;
+  std::vector<float> hessian(rows, 1.0f);
+  auto hess = Span<float const>{hessian};
+
+  HistogramCuts row_cuts{0};
+  {
+    HostSketchContainer sketch(&ctx, n_bins, m->Info().feature_types.ConstHostSpan(), column_size,
+                               false);
+    for (auto const& page : m->GetBatches<SparsePage>(&ctx)) {
+      sketch.PushRowPage(page, m->Info(), hess);
+    }
+    row_cuts = sketch.MakeCuts(&ctx, m->Info());
+  }
+  AssertSecureColumnSplitCuts(row_cuts, rank);
+
+  HistogramCuts sorted_cuts{0};
+  {
+    HostSketchContainer sketch(&ctx, n_bins, m->Info().feature_types.ConstHostSpan(), column_size,
+                               false);
+    for (auto const& page : m->GetBatches<SortedCSCPage>(&ctx)) {
+      sketch.PushColPage(page, m->Info(), hess);
+    }
+    sorted_cuts = sketch.MakeCuts(&ctx, m->Info());
+  }
+  AssertSecureColumnSplitCuts(sorted_cuts, rank);
+}
+#endif  // defined(XGBOOST_USE_FEDERATED)
 }  // anonymous namespace
 
 TEST(Quantile, ColumnSplit) {
   constexpr size_t kRows = 4000, kCols = 200;
   collective::TestDistributedGlobal(4, [&] { DoPropertyColumnSplitQuantile(kRows, kCols); });
 }
+
+#if defined(XGBOOST_USE_FEDERATED)
+TEST(Quantile, ColSplitSecure) {
+  auto constexpr kWorkers = 2;
+  collective::TestEncryptedGlobal(kWorkers, [] { DoTestColSplitQuantileSecure(); });
+}
+#endif  // defined(XGBOOST_USE_FEDERATED)
 
 }  // namespace xgboost::common

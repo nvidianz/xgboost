@@ -57,6 +57,15 @@
 #include "xgboost/tree_model.h"          // for RegTree
 #include "xgboost/tree_updater.h"        // for TreeUpdater
 
+#include "../collective/communicator-inl.h"
+#include "../collective/allgather.h"         // for AllgatherV
+
+#if defined(XGBOOST_USE_FEDERATED)
+#include "../../plugin/federated/federated_comm.h"  // for FederatedComm
+#else
+#include "../common/error_msg.h"  // for NoFederated
+#endif
+
 namespace xgboost::tree {
 DMLC_REGISTRY_FILE_TAG(updater_gpu_hist);
 
@@ -123,6 +132,8 @@ struct GPUHistMakerDevice {
     }
     return nodes;
   }
+
+  DeviceHistogramBuilder histogram_;
 
  public:
   linalg::Matrix<GradientPairInt64> d_gpair;  // storage for gpair;
@@ -607,6 +618,57 @@ struct GPUHistMakerDevice {
     return true;
   }
 
+#if defined(XGBOOST_USE_FEDERATED)
+  void AllReduceHistEncrypted(int nidx, int num_histograms) {
+    monitor.Start(__func__);
+    // Get encryption plugin
+    auto const &comm = collective::GlobalCommGroup()->Ctx(ctx_, DeviceOrd::CPU());
+    auto const &fed = dynamic_cast<collective::FederatedComm const &>(comm);
+    auto plugin = fed.EncryptionPlugin();
+
+    // Get the histogram data
+    std::size_t n = page->Cuts().TotalBins() * 2 * num_histograms;
+    auto d_node_hist = hist.GetNodeHistogram(nidx).data();
+    using ReduceT = typename std::remove_pointer<decltype(d_node_hist)>::type::ValueT;
+    auto hist_vec = linalg::MakeVec(reinterpret_cast<ReduceT*>(d_node_hist), n, ctx_->Device());
+
+    // copy the histogram out of GPU memory
+    common::Span<std::int8_t> erased = common::EraseType(hist_vec.Values());
+    std::vector<std::int8_t> h_data(erased.size());
+    dh::safe_cuda(cudaMemcpy(h_data.data(), erased.data(), erased.size(), cudaMemcpyDeviceToHost));
+
+    // call the encryption plugin
+    auto src_hist = common::Span{reinterpret_cast<double const *>(h_data.data()), n};
+    auto hist_buf = plugin->BuildEncryptedHistHori(src_hist);
+
+    // allgather
+    HostDeviceVector<std::int8_t> hist_entries;
+    std::vector<std::int64_t> recv_segments;
+    auto rc = collective::AllgatherV(ctx_, linalg::MakeVec(hist_buf),
+                                     &recv_segments, &hist_entries);
+    collective::SafeColl(rc);
+
+    // call the encryption plugin to decode the histograms
+    auto hist_aggr = plugin->SyncEncryptedHistHori(
+            common::RestoreType<std::uint8_t>(hist_entries.HostSpan()));
+
+    // reinterpret the aggregated histogram as a int64_t and aggregate
+    auto hist_aggr_64 = common::Span{
+        reinterpret_cast<std::int64_t *>(hist_aggr.data()), hist_aggr.size()};
+    int num_ranks = collective::GlobalCommGroup()->World();
+    for (size_t i = 0; i < n; i++) {
+      for (int j = 1; j < num_ranks; j++) {
+        hist_aggr_64[i] = hist_aggr_64[i] + hist_aggr_64[i + j * n];
+      }
+    }
+
+    // copy the aggregated histogram back to GPU memory
+    cudaMemcpy(erased.data(), hist_aggr_64.data(), erased.size(), cudaMemcpyHostToDevice);
+
+    monitor.Stop(__func__);
+  }
+#endif
+
   void ApplySplit(const GPUExpandEntry& candidate, RegTree* p_tree) {
     RegTree& tree = *p_tree;
 
@@ -674,7 +736,15 @@ struct GPUHistMakerDevice {
       this->BuildHist(page, k, kRootNIdx);
       ++k;
     }
-    this->histogram_.AllReduceHist(ctx_, p_fmat->Info(), kRootNIdx, 1);
+    if (collective::IsDistributed() && p_fmat->Info().IsRowSplit() && collective::IsEncrypted()) {
+#if defined(XGBOOST_USE_FEDERATED)
+      this->AllReduceHistEncrypted(kRootNIdx, 1);
+#else
+      LOG(FATAL) << error::NoFederated();
+#endif
+    } else {
+      this->histogram_.AllReduceHist(ctx_, p_fmat->Info(), kRootNIdx, 1);
+    }
 
     // Remember root stats
     auto root_sum = (*this->quantiser)[0].ToFloatingPoint(root_sum_quantised);

@@ -1,5 +1,5 @@
 /**
- * Copyright 2018-2023 by Contributors
+ * Copyright 2018-2024, XGBoost Contributors
  */
 #include <gtest/gtest.h>
 #include <xgboost/base.h>                // for bst_node_t, bst_bin_t, Gradient...
@@ -71,7 +71,7 @@ void TestAddHistRows(bool is_distributed) {
   HistMakerTrainParam hist_param;
   HistogramBuilder histogram_builder;
   histogram_builder.Reset(&ctx, gmat.cut.TotalBins(), {kMaxBins, 0.5}, is_distributed, false,
-                          &hist_param);
+                          false, &hist_param);
   histogram_builder.AddHistRows(tree.HostScView(), &nodes_to_build, &nodes_to_sub, false);
 
   for (bst_node_t const &nidx : nodes_to_build) {
@@ -103,7 +103,7 @@ void TestSyncHist(bool is_distributed) {
   HistogramBuilder histogram;
   uint32_t total_bins = gmat.cut.Ptrs().back();
   HistMakerTrainParam hist_param;
-  histogram.Reset(&ctx, total_bins, {kMaxBins, 0.5}, is_distributed, false, &hist_param);
+  histogram.Reset(&ctx, total_bins, {kMaxBins, 0.5}, is_distributed, false, false, &hist_param);
 
   common::RowSetCollection row_set_collection;
   {
@@ -185,8 +185,7 @@ void TestSyncHist(bool is_distributed) {
 
   histogram.Buffer().Reset(1, n_nodes, space, target_hists);
   // sync hist
-  histogram.SyncHistogram(&ctx, tree.HostScView(), nodes_for_explicit_hist_build,
-                          nodes_for_subtraction_trick);
+  histogram.SyncHistogram(tree.HostScView(), nodes_for_explicit_hist_build, nodes_for_subtraction_trick);
 
   using GHistRowT = common::GHistRow;
   auto check_hist = [](const GHistRowT parent, const GHistRowT left, const GHistRowT right,
@@ -228,11 +227,11 @@ TEST(CPUHistogram, SyncHist) {
 }
 
 void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read_by_column,
-                        bool is_col_split) {
+                        bool is_col_split, bool is_secure) {
   size_t constexpr kNRows = 8, kNCols = 16;
   int32_t constexpr kMaxBins = 4;
   auto p_fmat = RandomDataGenerator(kNRows, kNCols, 0.8).Seed(3).GenerateDMatrix();
-  if (is_col_split) {
+  if (is_col_split && !is_secure) {
     p_fmat = std::shared_ptr<DMatrix>{
         p_fmat->SliceCol(collective::GetWorldSize(), collective::GetRank())};
   }
@@ -240,7 +239,6 @@ void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read
       *(p_fmat->GetBatches<GHistIndexMatrix>(ctx, BatchParam{kMaxBins, 0.5}).begin());
   uint32_t total_bins = gmat.cut.Ptrs().back();
 
-  static double constexpr kEps = 1e-6;
   std::vector<GradientPair> gpair = {{0.23f, 0.24f}, {0.24f, 0.25f}, {0.26f, 0.27f},
                                      {0.27f, 0.28f}, {0.27f, 0.29f}, {0.37f, 0.39f},
                                      {0.47f, 0.49f}, {0.57f, 0.59f}};
@@ -248,7 +246,7 @@ void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read
   bst_node_t nid = 0;
   HistogramBuilder histogram;
   HistMakerTrainParam hist_param;
-  histogram.Reset(ctx, total_bins, {kMaxBins, 0.5}, is_distributed, is_col_split, &hist_param);
+  histogram.Reset(ctx, total_bins, {kMaxBins, 0.5}, is_distributed, is_col_split, is_secure, &hist_param);
 
   RegTree tree;
 
@@ -270,7 +268,7 @@ void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read
     histogram.BuildHist(0, space, gidx, row_set_collection, nodes_to_build,
                         linalg::MakeTensorView(ctx, gpair, gpair.size()), force_read_by_column);
   }
-  histogram.SyncHistogram(ctx, tree.HostScView(), nodes_to_build, {});
+  histogram.SyncHistogram(tree.HostScView(), nodes_to_build, {});
 
   // Check if number of histogram bins is correct
   ASSERT_EQ(histogram.Histogram()[nid].size(), gmat.cut.Ptrs().back());
@@ -290,17 +288,26 @@ void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read
   // Now validate the computed histogram returned by BuildHist
   for (size_t i = 0; i < histogram.Histogram()[nid].size(); ++i) {
     GradientPairPrecise sol = histogram_expected[i];
-    ASSERT_NEAR(sol.GetGrad(), histogram.Histogram()[nid][i].GetGrad(), kEps);
-    ASSERT_NEAR(sol.GetHess(), histogram.Histogram()[nid][i].GetHess(), kEps);
+    double grad = sol.GetGrad();
+    double hess = sol.GetHess();
+    if (is_distributed && !is_col_split) {
+      // the solution also needs to be allreduce
+      collective::SafeColl(
+          collective::Allreduce(ctx, linalg::MakeVec(&grad, 1), collective::Op::kSum));
+      collective::SafeColl(
+          collective::Allreduce(ctx, linalg::MakeVec(&hess, 1), collective::Op::kSum));
+    }
+    ASSERT_NEAR(grad, histogram.Histogram()[nid][i].GetGrad(), kRtEps);
+    ASSERT_NEAR(hess, histogram.Histogram()[nid][i].GetHess(), kRtEps);
   }
 }
 
 TEST(CPUHistogram, BuildHist) {
   Context ctx;
-  TestBuildHistogram(&ctx, true, false, false);
-  TestBuildHistogram(&ctx, false, false, false);
-  TestBuildHistogram(&ctx, true, true, false);
-  TestBuildHistogram(&ctx, false, true, false);
+  TestBuildHistogram(&ctx, true, false, false, false);
+  TestBuildHistogram(&ctx, false, false, false, false);
+  TestBuildHistogram(&ctx, true, true, false, false);
+  TestBuildHistogram(&ctx, false, true, false, false);
 }
 
 TEST(CPUHistogram, BuildHistColumnSplit) {
@@ -309,8 +316,32 @@ TEST(CPUHistogram, BuildHistColumnSplit) {
   std::int32_t n_total_threads = std::thread::hardware_concurrency();
   auto n_threads = std::max(n_total_threads / kWorkers, 1);
   ctx.UpdateAllowUnknown(Args{{"nthread", std::to_string(n_threads)}});
-  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, true, true); });
-  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, false, true); });
+  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, true, true, false); });
+  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, false, true, false); });
+}
+
+TEST(CPUHistogram, BuildHistDist) {
+  auto constexpr kWorkers = 4;
+  collective::TestDistributedGlobal(kWorkers, [] {
+    Context ctx;
+    TestBuildHistogram(&ctx, true, false, false, false);
+  });
+  collective::TestDistributedGlobal(kWorkers, [] {
+    Context ctx;
+    TestBuildHistogram(&ctx, true, true, false, false);
+  });
+}
+
+TEST(CPUHistogram, BuildHistDistColSplitSecure) {
+  auto constexpr kWorkers = 4;
+  collective::TestDistributedGlobal(kWorkers, [] {
+    Context ctx;
+    TestBuildHistogram(&ctx, true, true, true, true);
+  });
+  collective::TestDistributedGlobal(kWorkers, [] {
+    Context ctx;
+    TestBuildHistogram(&ctx, true, false, true, true);
+  });
 }
 
 namespace {
@@ -368,13 +399,13 @@ void TestHistogramCategorical(size_t n_categories, bool force_read_by_column) {
   HistogramBuilder cat_hist;
   for (auto const &gidx : cat_m->GetBatches<GHistIndexMatrix>(&ctx, {kBins, 0.5})) {
     auto total_bins = gidx.cut.TotalBins();
-    cat_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, &hist_param);
+    cat_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, false, &hist_param);
     cat_hist.AddHistRows(tree.HostScView(), &nodes_to_build, &dummy_sub, false);
     cat_hist.BuildHist(0, space, gidx, row_set_collection, nodes_to_build,
                        linalg::MakeTensorView(&ctx, gpair.ConstHostSpan(), gpair.Size()),
                        force_read_by_column);
   }
-  cat_hist.SyncHistogram(&ctx, tree.HostScView(), nodes_to_build, {});
+  cat_hist.SyncHistogram(tree.HostScView(), nodes_to_build, {});
 
   /**
    * Generate hist with one hot encoded data.
@@ -384,13 +415,13 @@ void TestHistogramCategorical(size_t n_categories, bool force_read_by_column) {
   HistogramBuilder onehot_hist;
   for (auto const &gidx : encode_m->GetBatches<GHistIndexMatrix>(&ctx, {kBins, 0.5})) {
     auto total_bins = gidx.cut.TotalBins();
-    onehot_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, &hist_param);
+    onehot_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, false, &hist_param);
     onehot_hist.AddHistRows(tree.HostScView(), &nodes_to_build, &dummy_sub, false);
     onehot_hist.BuildHist(0, space, gidx, row_set_collection, nodes_to_build,
                           linalg::MakeTensorView(&ctx, gpair.ConstHostSpan(), gpair.Size()),
                           force_read_by_column);
   }
-  onehot_hist.SyncHistogram(&ctx, tree.HostScView(), nodes_to_build, {});
+  onehot_hist.SyncHistogram(tree.HostScView(), nodes_to_build, {});
 
   auto cat = cat_hist.Histogram()[0];
   auto onehot = onehot_hist.Histogram()[0];
@@ -406,6 +437,7 @@ TEST(CPUHistogram, Categorical) {
     TestHistogramCategorical(n_categories, true);
   }
 }
+
 namespace {
 void TestHistogramExternalMemory(Context const *ctx, BatchParam batch_param, bool is_approx,
                                  bool force_read_by_column) {
@@ -451,7 +483,7 @@ void TestHistogramExternalMemory(Context const *ctx, BatchParam batch_param, boo
     }
     ASSERT_EQ(n_samples, m->Info().num_row_);
 
-    multi_build.Reset(ctx, total_bins, batch_param, false, false, &hist_param);
+    multi_build.Reset(ctx, total_bins, batch_param, false, false, false, &hist_param);
     multi_build.AddHistRows(tree.HostScView(), &nodes, &dummy_sub, false);
     std::size_t page_idx{0};
     for (auto const &page : m->GetBatches<GHistIndexMatrix>(ctx, batch_param)) {
@@ -460,7 +492,7 @@ void TestHistogramExternalMemory(Context const *ctx, BatchParam batch_param, boo
                             force_read_by_column);
       ++page_idx;
     }
-    multi_build.SyncHistogram(ctx, tree.HostScView(), nodes, {});
+    multi_build.SyncHistogram(tree.HostScView(), nodes, {});
 
     multi_page = multi_build.Histogram()[RegTree::kRoot];
   }
@@ -474,7 +506,7 @@ void TestHistogramExternalMemory(Context const *ctx, BatchParam batch_param, boo
     common::RowSetCollection row_set_collection;
     InitRowPartitionForTest(&row_set_collection, n_samples);
 
-    single_build.Reset(ctx, total_bins, batch_param, false, false, &hist_param);
+    single_build.Reset(ctx, total_bins, batch_param, false, false, false, &hist_param);
     SparsePage concat;
     std::vector<float> hess(m->Info().num_row_, 1.0f);
     for (auto const &page : m->GetBatches<SparsePage>()) {
@@ -489,7 +521,7 @@ void TestHistogramExternalMemory(Context const *ctx, BatchParam batch_param, boo
     single_build.BuildHist(0, space, gmat, row_set_collection, nodes,
                            linalg::MakeTensorView(ctx, h_gpair, h_gpair.size()),
                            force_read_by_column);
-    single_build.SyncHistogram(ctx, tree.HostScView(), nodes, {});
+    single_build.SyncHistogram(tree.HostScView(), nodes, {});
 
     single_page = single_build.Histogram()[RegTree::kRoot];
   }
@@ -551,7 +583,7 @@ class OverflowTest : public ::testing::TestWithParam<std::tuple<bool, bool>> {
     CHECK_EQ(Xy->Info().IsColumnSplit(), is_col_split);
 
     hist_builder.Reset(&ctx, n_total_bins, tree.NumTargets(), batch, is_distributed,
-                       Xy->Info().IsColumnSplit(), &hist_param);
+                       Xy->Info().IsColumnSplit(), collective::IsEncrypted(), &hist_param);
 
     std::vector<CommonRowPartitioner> partitioners;
     partitioners.emplace_back(&ctx, Xy->Info().num_row_, /*base_rowid=*/0,
@@ -598,9 +630,9 @@ class OverflowTest : public ::testing::TestWithParam<std::tuple<bool, bool>> {
   }
 
   void RunTest() {
-    auto param = GetParam();
-    auto res0 = this->TestOverflow(false, std::get<0>(param), std::get<1>(param));
-    auto res1 = this->TestOverflow(true, std::get<0>(param), std::get<1>(param));
+    auto [is_distributed, is_col_split] = GetParam();
+    auto res0 = this->TestOverflow(false, is_distributed, is_col_split);
+    auto res1 = this->TestOverflow(true, is_distributed, is_col_split);
     ASSERT_EQ(res0, res1);
   }
 };

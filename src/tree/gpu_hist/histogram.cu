@@ -14,6 +14,15 @@
 #include "row_partitioner.cuh"
 #include "xgboost/base.h"
 
+#include "../../collective/allgather.h"         // for AllgatherV
+
+#include "../../common/device_helpers.cuh"
+#if defined(XGBOOST_USE_FEDERATED)
+#include "../../../plugin/federated/federated_hist.h"  // for FederataedHistPolicy
+#else
+#include "../../common/error_msg.h"  // for NoFederated
+#endif
+
 namespace xgboost::tree {
 namespace {
 template <typename IterT>
@@ -605,5 +614,116 @@ void DeviceHistogramBuilder::AllReduceHist(Context const* ctx, MetaInfo const& i
                       d_node_hist.size() * 2 * num_histograms, ctx->Device()));
   SafeColl(rc);
   this->monitor_.Stop(__func__);
+}
+
+namespace {
+struct ReadMatrixFunction {
+  EllpackDeviceAccessor matrix;
+  int k_cols;
+  bst_float* matrix_data_d;
+  ReadMatrixFunction(EllpackDeviceAccessor matrix, int k_cols, bst_float* matrix_data_d)
+    : matrix(std::move(matrix)), k_cols(k_cols), matrix_data_d(matrix_data_d) {}
+
+  __device__ void operator()(size_t global_idx) {
+    auto row = global_idx / k_cols;
+    auto col = global_idx % k_cols;
+    auto value = matrix.GetBinIndex(row, col);
+    if (isnan(static_cast<float>(value))) {
+      value = -1;
+    }
+    matrix_data_d[global_idx] = value;
+  }
+};
+}  // anonymous namespace
+
+void DeviceHistogramBuilder::BuildHistogramEncryptedVert(
+    Context const* ctx, EllpackDeviceAccessor const& matrix,
+    FeatureGroupsAccessor const& feature_groups, common::Span<GradientPair const> gpair,
+    common::Span<const std::uint32_t> ridx, common::Span<GradientPairInt64> histogram,
+    GradientQuantiser rounding) {
+#if defined(XGBOOST_USE_FEDERATED)
+  // Encrypted vertical, build histogram using federated plugin
+  auto const &comm = collective::GlobalCommGroup()->Ctx(ctx, DeviceOrd::CPU());
+  auto const &fed = dynamic_cast<collective::FederatedComm const &>(comm);
+  auto plugin = fed.EncryptionPlugin();
+
+  // Transmit matrix to plugin
+  if (!is_aggr_context_initialized) {
+    // Get cutptrs
+    std::vector<uint32_t> h_cuts_ptr(matrix.feature_segments.size());
+    dh::CopyDeviceSpanToVector(&h_cuts_ptr, matrix.feature_segments);
+
+    // Get bin_idx matrix
+    auto kRows = matrix.n_rows;
+    auto kCols = matrix.NumFeatures();
+    std::vector<int32_t> h_bin_idx(kRows * kCols);
+    // Access GPU matrix data
+    thrust::device_vector<bst_float> matrix_d(kRows * kCols);
+    dh::LaunchN(kRows * kCols, ReadMatrixFunction(matrix, kCols, matrix_d.data().get()));
+    thrust::copy(matrix_d.begin(), matrix_d.end(), h_bin_idx.begin());
+
+    // Initialize plugin context
+    plugin->Reset(h_cuts_ptr, h_bin_idx);
+    is_aggr_context_initialized = true;
+  }
+
+  // get row indices from device
+  std::vector<uint32_t> h_ridx(ridx.size());
+  dh::CopyDeviceSpanToVector(&h_ridx, ridx);
+  // necessary conversions to fit plugin expectations
+  std::vector<uint64_t> h_ridx_64(ridx.size());
+  for (std::size_t i = 0; i < ridx.size(); i++) {
+    h_ridx_64[i] = h_ridx[i];
+  }
+  std::vector<std::uint64_t const *> ptrs(1);
+  std::vector<std::size_t> sizes(1);
+  std::vector<bst_node_t> nodes(1);
+  ptrs[0] = reinterpret_cast<std::uint64_t const *>(h_ridx_64.data());
+  sizes[0] = h_ridx_64.size();
+  nodes[0] = 0;
+
+  // Transmit row indices to plugin and get encrypted histogram
+  auto hist_data = plugin->BuildEncryptedHistVert(ptrs, sizes, nodes);
+
+  // Perform AllGather
+  HostDeviceVector<std::int8_t> hist_entries;
+  std::vector<std::int64_t> recv_segments;
+  collective::SafeColl(
+      collective::AllgatherV(ctx, linalg::MakeVec(hist_data), &recv_segments, &hist_entries));
+
+  if (collective::GetRank() != 0) {
+    // Below is only needed for label owner
+    return;
+  }
+
+  // Call the plugin to get the resulting histogram. Histogram from all workers are
+  // gathered to the label owner.
+  common::Span<double> hist_aggr =
+      plugin->SyncEncryptedHistVert(
+          common::RestoreType<std::uint8_t>(hist_entries.HostSpan()));
+
+  // Post process the AllGathered data
+  auto world_size = collective::GetWorldSize();
+  std::vector<GradientPairInt64> host_histogram(histogram.size());
+  for (std::size_t i = 0; i < histogram.size(); i++) {
+    double grad = 0.0;
+    double hess = 0.0;
+    for (auto rank = 0; rank < world_size; ++rank) {
+      auto idx = rank * histogram.size() + i;
+      grad += hist_aggr[idx * 2];
+      hess += hist_aggr[idx * 2 + 1];
+    }
+    GradientPairPrecise hist_item(grad, hess);
+    host_histogram[i] = rounding.ToFixedPoint(hist_item);
+  }
+
+  // copy the aggregated histogram back to GPU memory
+  // at this point, the histogram contains full information from all parties
+  dh::safe_cuda(cudaMemcpyAsync(histogram.data(), host_histogram.data(),
+                                histogram.size() * sizeof(GradientPairInt64),
+                                cudaMemcpyHostToDevice));
+#else
+  LOG(FATAL) << error::NoFederated();
+#endif
 }
 }  // namespace xgboost::tree
