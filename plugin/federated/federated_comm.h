@@ -11,7 +11,8 @@
 #include <memory>   // for shared_ptr
 #include <string>   // for string
 
-#include "../../src/collective/comm.h"  // for HostComm
+#include "../../src/collective/comm.h"        // for HostComm
+#include "../../src/collective/comm_group.h"  // for GlobalCommGroup
 #include "federated_plugin.h"           // for FederatedPlugin
 #include "xgboost/json.h"
 
@@ -65,7 +66,7 @@ class FederatedComm : public HostComm {
     return Success();
   }
   [[nodiscard]] bool IsFederated() const override { return true; }
-  [[nodiscard]] bool IsEncrypted() const override { return static_cast<bool>(plugin_); }
+  [[nodiscard]] bool IsEncrypted() const { return static_cast<bool>(plugin_); }
   [[nodiscard]] federated::Federated::Stub* Handle() const { return stub_.get(); }
 
   [[nodiscard]] Comm* MakeCUDAVar(Context const* ctx, std::shared_ptr<Coll> pimpl) const override;
@@ -80,4 +81,26 @@ class FederatedComm : public HostComm {
 
   auto EncryptionPlugin() const { return plugin_; }
 };
+
+[[nodiscard]] inline FederatedComm const* GetFederatedComm(Context const* ctx = nullptr) {
+  auto const& comm = GlobalCommGroup()->Ctx(ctx, DeviceOrd::CPU());
+  if (!comm.IsFederated()) {
+    return nullptr;
+  }
+  auto const* fed = dynamic_cast<FederatedComm const*>(&comm);
+  CHECK(fed);
+  return fed;
+}
+
+[[nodiscard]] inline bool IsFederatedEncrypted(Context const* ctx = nullptr) {
+  auto const* fed = GetFederatedComm(ctx);
+  return fed && fed->IsEncrypted();
+}
+
+[[nodiscard]] inline std::shared_ptr<FederatedPluginBase> GetFederatedPlugin(
+    Context const* ctx = nullptr) {
+  auto const* fed = GetFederatedComm(ctx);
+  CHECK(fed);
+  return fed->EncryptionPlugin();
+}
 }  // namespace xgboost::collective

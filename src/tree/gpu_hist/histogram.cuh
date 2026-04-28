@@ -12,10 +12,8 @@
 #include "../../common/device_vector.cuh"   // for device_vector
 #include "../../data/ellpack_page.cuh"      // for EllpackDeviceAccessor
 #include "feature_groups.cuh"               // for FeatureGroupsAccessor
-#include "quantiser.cuh"                    // for GradientQuantiser
 #include "xgboost/base.h"                   // for GradientPair, GradientPairInt64
 #include "xgboost/context.h"                // for Context
-#include "xgboost/data.h"                   // for MetaInfo
 #include "xgboost/span.h"                   // for Span
 
 namespace xgboost::tree {
@@ -41,7 +39,6 @@ namespace xgboost::tree {
   return max_shared;
 }
 
-namespace xgboost::tree {
 /**
  * @brief An atomicAdd designed for gradient pair with better performance.  For general
  *        int64_t atomicAdd, one can simply cast it to unsigned long long. Exposed for testing.
@@ -180,8 +177,6 @@ class DeviceHistogramBuilder {
  public:
   explicit DeviceHistogramBuilder();
   ~DeviceHistogramBuilder();
-  // Whether the secure aggregation context has been initialized
-  bool is_aggr_context_initialized{false};
   // TODO(jiamingy): use a type larger than bst_bin_t since we need to support multi-target.
   void Reset(Context const* ctx, std::size_t max_cached_hist_nodes, bst_bin_t n_total_bins,
              bool force_global_memory);
@@ -204,13 +199,6 @@ class DeviceHistogramBuilder {
   // num histograms is the number of contiguous histograms in memory to reduce over
   void AllReduceHist(Context const* ctx, MetaInfo const& info, bst_node_t nidx,
                      std::size_t num_histograms);
-  // Build histogram using encrypted federated plugin for secure vertical training
-  void BuildHistogramEncryptedVert(Context const* ctx, EllpackDeviceAccessor const& matrix,
-                                   FeatureGroupsAccessor const& feature_groups,
-                                   common::Span<GradientPair const> gpair,
-                                   common::Span<const std::uint32_t> ridx,
-                                   common::Span<GradientPairInt64> histogram,
-                                   GradientQuantiser rounding);
 
   [[nodiscard]] bool CanSubtract(bst_node_t nidx_parent, bst_node_t nidx_histogram) const {
     return hist_.HistogramExists(nidx_parent) && hist_.HistogramExists(nidx_histogram);

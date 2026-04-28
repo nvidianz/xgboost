@@ -674,7 +674,7 @@ void DoTestColSplitQuantileSecure() {
   Context ctx;
   auto const world = collective::GetWorldSize();
   auto const rank = collective::GetRank();
-  ASSERT_TRUE(collective::IsEncrypted());
+  ASSERT_TRUE(collective::IsFederatedEncrypted(&ctx));
 
   constexpr std::size_t cols = 2;
   constexpr std::size_t rows = 3;

@@ -36,7 +36,7 @@ void FederatedPluginMock::Reset(common::Span<std::uint32_t const> cutptrs,
     return bin >= 0;
   };
   std::size_t nnz = std::count_if(bin_idx.cbegin(), bin_idx.cend(), is_valid);
-  gmat_.ResizeIndex(nnz, /*is_dense=*/nnz == bin_idx.size());
+  gmat_.ResizeIndex(&ctx_, nnz, /*is_dense=*/nnz == bin_idx.size());
   gmat_.SetDense(nnz == bin_idx.size());
   common::DispatchBinType(gmat_.index.GetBinTypeSize(), [&](auto t) {
     auto data = gmat_.index.data<decltype(t)>();

@@ -29,6 +29,10 @@
 #include "xgboost/context.h"                    // for COntext
 #include "xgboost/linalg.h"                     // for Constants, Vector
 
+#if defined(XGBOOST_USE_FEDERATED)
+#include "../../../plugin/federated/federated_comm.h"  // for IsFederatedEncrypted
+#endif  // defined(XGBOOST_USE_FEDERATED)
+
 namespace xgboost::tree {
 /**
  * @brief Gather the expand entries from all the workers.
@@ -513,8 +517,10 @@ class HistEvaluator {
         param_{param},
         column_sampler_{std::move(sampler)},
         tree_evaluator_{*param, static_cast<bst_feature_t>(info.num_col_), DeviceOrd::CPU()},
-        is_col_split_{info.IsColumnSplit()},
-        is_secure_{collective::IsEncrypted()} {
+        is_col_split_{info.IsColumnSplit()} {
+#if defined(XGBOOST_USE_FEDERATED)
+    is_secure_ = collective::IsFederatedEncrypted(ctx);
+#endif  // defined(XGBOOST_USE_FEDERATED)
     interaction_constraints_.Configure(*param, info.num_col_);
     column_sampler_->Init(ctx, info.num_col_, info.feature_weights, param_->colsample_bynode,
                           param_->colsample_bylevel, param_->colsample_bytree);
@@ -831,8 +837,10 @@ class HistMultiEvaluator {
       : param_{param},
         column_sampler_{std::move(sampler)},
         ctx_{ctx},
-        is_col_split_{info.IsColumnSplit()},
-        is_secure_{collective::IsEncrypted()} {
+        is_col_split_{info.IsColumnSplit()} {
+#if defined(XGBOOST_USE_FEDERATED)
+    is_secure_ = collective::IsFederatedEncrypted(ctx);
+#endif  // defined(XGBOOST_USE_FEDERATED)
     interaction_constraints_.Configure(*param, info.num_col_);
     column_sampler_->Init(ctx, info.num_col_, info.feature_weights, param_->colsample_bynode,
                           param_->colsample_bylevel, param_->colsample_bytree);

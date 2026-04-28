@@ -16,6 +16,10 @@
 #include "categorical.h"
 #include "hist_util.h"
 
+#if defined(XGBOOST_USE_FEDERATED)
+#include "../../plugin/federated/federated_comm.h"  // for IsFederatedEncrypted
+#endif  // defined(XGBOOST_USE_FEDERATED)
+
 namespace xgboost::common {
 HostSketchContainer::HostSketchContainer(Context const *ctx, bst_bin_t max_bin,
                                          Span<FeatureType const> feature_types,
@@ -326,6 +330,14 @@ struct CategoricalReducePayload {
   std::vector<std::size_t> offsets_;
   Span<float const> values_;
 };
+
+[[nodiscard]] bool IsSecureFederated(Context const *ctx) {
+#if defined(XGBOOST_USE_FEDERATED)
+  return collective::IsFederatedEncrypted(ctx);
+#else
+  return false;
+#endif  // defined(XGBOOST_USE_FEDERATED)
+}
 }  // anonymous namespace
 
 void HostSketchContainer::PushRowPage(SparsePage const &page, MetaInfo const &info,
@@ -524,14 +536,19 @@ auto HostSketchContainer::AllReduce(Context const *ctx, MetaInfo const &info,
 
 bool AddCutPoints(Context const *ctx, WQSummaryContainer const &summary, size_t max_bin,
                   HistogramCuts *cuts, bool secure) {
-  size_t required_cuts = std::min(summary.Size(), static_cast<size_t>(max_bin));
-  if (secure) {
-    // Sync required_cuts across workers so all produce the same number of bins.
-    collective::SafeColl(collective::Allreduce(ctx, &required_cuts, collective::Op::kMax));
+  if (!secure) {
+    auto &cut_values = cuts->cut_values_.HostVector();
+    auto queried = summary.QueryCutValues(max_bin);
+    cut_values.insert(cut_values.end(), queried.cbegin(), queried.cend());
+    return false;
   }
+
+  size_t required_cuts = std::min(summary.Size(), static_cast<size_t>(max_bin));
+  // Sync required_cuts across workers so all produce the same number of bins.
+  collective::SafeColl(collective::Allreduce(ctx, &required_cuts, collective::Op::kMax));
   auto &cut_values = cuts->cut_values_.HostVector();
   // In secure mode, if this worker has no data for this feature, insert NaN placeholders.
-  if (secure && summary.Size() == 0) {
+  if (summary.Size() == 0) {
     for (size_t i = 0; i < required_cuts; ++i) {
       cut_values.push_back(std::numeric_limits<bst_float>::quiet_NaN());
     }
@@ -601,7 +618,7 @@ HistogramCuts HostSketchContainer::MakeCuts(Context const *ctx, MetaInfo const &
     if (IsCat(feature_types_, fid)) {
       AddCategories(reduced_categories[categorical_index[fid]], &max_cat, p_cuts);
     } else {
-      AddCutPoints(ctx, reduced_numerical[fid], max_num_bins, p_cuts, collective::IsEncrypted());
+      AddCutPoints(ctx, reduced_numerical[fid], max_num_bins, p_cuts, IsSecureFederated(ctx));
     }
     // Ensure that every feature gets at least one quantile point
     CHECK_LE(p_cuts->cut_values_.HostVector().size(), std::numeric_limits<uint32_t>::max());

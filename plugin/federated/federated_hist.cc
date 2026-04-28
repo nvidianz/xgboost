@@ -127,8 +127,8 @@ void FederataedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
     // Perform AllGather
     HostDeviceVector<std::int8_t> hist_entries;
     std::vector<std::int64_t> recv_segments;
-    collective::SafeColl(
-        collective::AllgatherV(ctx_, linalg::MakeVec(hist_data_), &recv_segments, &hist_entries));
+    collective::SafeColl(collective::AllgatherV(
+        ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_data_), &recv_segments, &hist_entries));
 
     // Call the plugin here to get the resulting histogram. Histogram from all workers are
     // gathered to the label owner.
@@ -154,8 +154,8 @@ void FederataedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
     // allgather
     HostDeviceVector<std::int8_t> hist_entries;
     std::vector<std::int64_t> recv_segments;
-    auto rc =
-        collective::AllgatherV(ctx_, linalg::MakeVec(hist_buf), &recv_segments, &hist_entries);
+    auto rc = collective::AllgatherV(
+        ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_buf), &recv_segments, &hist_entries);
     collective::SafeColl(rc);
     CHECK_EQ(hist_entries.Size(), hist_buf.size() * n_workers);
 

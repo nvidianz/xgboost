@@ -132,9 +132,6 @@ struct GPUHistMakerDevice {
     }
     return nodes;
   }
-
-  DeviceHistogramBuilder histogram_;
-
  public:
   linalg::Matrix<GradientPairInt64> d_gpair;  // storage for gpair;
   dh::device_vector<int> monotone_constraints;
@@ -622,15 +619,14 @@ struct GPUHistMakerDevice {
   void AllReduceHistEncrypted(int nidx, int num_histograms) {
     monitor.Start(__func__);
     // Get encryption plugin
-    auto const &comm = collective::GlobalCommGroup()->Ctx(ctx_, DeviceOrd::CPU());
-    auto const &fed = dynamic_cast<collective::FederatedComm const &>(comm);
-    auto plugin = fed.EncryptionPlugin();
+    auto plugin = collective::GetFederatedPlugin(ctx_);
 
     // Get the histogram data
-    std::size_t n = page->Cuts().TotalBins() * 2 * num_histograms;
-    auto d_node_hist = hist.GetNodeHistogram(nidx).data();
-    using ReduceT = typename std::remove_pointer<decltype(d_node_hist)>::type::ValueT;
-    auto hist_vec = linalg::MakeVec(reinterpret_cast<ReduceT*>(d_node_hist), n, ctx_->Device());
+    auto d_node_hist = histogram_.GetNodeHistogram(nidx);
+    using ReduceT = typename std::remove_pointer<decltype(d_node_hist.data())>::type::ValueT;
+    std::size_t n = d_node_hist.size() * 2 * num_histograms;
+    auto hist_vec =
+        linalg::MakeVec(reinterpret_cast<ReduceT*>(d_node_hist.data()), n, ctx_->Device());
 
     // copy the histogram out of GPU memory
     common::Span<std::int8_t> erased = common::EraseType(hist_vec.Values());
@@ -644,8 +640,8 @@ struct GPUHistMakerDevice {
     // allgather
     HostDeviceVector<std::int8_t> hist_entries;
     std::vector<std::int64_t> recv_segments;
-    auto rc = collective::AllgatherV(ctx_, linalg::MakeVec(hist_buf),
-                                     &recv_segments, &hist_entries);
+    auto rc = collective::AllgatherV(
+        ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_buf), &recv_segments, &hist_entries);
     collective::SafeColl(rc);
 
     // call the encryption plugin to decode the histograms
@@ -736,7 +732,11 @@ struct GPUHistMakerDevice {
       this->BuildHist(page, k, kRootNIdx);
       ++k;
     }
-    if (collective::IsDistributed() && p_fmat->Info().IsRowSplit() && collective::IsEncrypted()) {
+    bool is_encrypted{false};
+#if defined(XGBOOST_USE_FEDERATED)
+    is_encrypted = collective::IsFederatedEncrypted(ctx_);
+#endif  // defined(XGBOOST_USE_FEDERATED)
+    if (collective::IsDistributed() && p_fmat->Info().IsRowSplit() && is_encrypted) {
 #if defined(XGBOOST_USE_FEDERATED)
       this->AllReduceHistEncrypted(kRootNIdx, 1);
 #else

@@ -5,9 +5,13 @@
  */
 #include <dmlc/parameter.h>
 #include <gtest/gtest.h>
+#include <xgboost/context.h>
 #include <xgboost/data.h>
+#include <xgboost/json.h>
 #include <xgboost/objective.h>
 
+#include "../../../../plugin/federated/federated_plugin.h"
+#include "../../../../src/collective/aggregator.h"
 #include "../../../../src/collective/communicator-inl.h"
 #include "../../../../src/common/linalg_op.h"  // for begin, end
 #include "../../helpers.h"
@@ -54,7 +58,7 @@ void VerifyObjective(std::size_t rows, std::size_t cols,
   auto base_score = GetBaseScore(model);
   ASSERT_EQ(base_score, expected_base_score) << " rank " << rank;
 
-  if (collective::IsEncrypted()) {
+  if (collective::IsFederatedEncrypted()) {
     // Passive party owns only a partial model. We compare the prediction instead.
     std::unique_ptr<Learner> exp{Learner::Create({})};
     exp->LoadModel(expected_model);
@@ -127,6 +131,54 @@ auto MakeTestParams() {
   return values;
 }
 }  // namespace
+
+TEST(FederatedPluginMock, Basic) {
+  Json config{Object{}};
+  config["federated_plugin"] = Object{};
+  config["federated_plugin"]["name"] = String{"mock"};
+  auto plugin = collective::CreateFederatedPlugin(config);
+
+  bst_idx_t n_bins{16};
+  std::vector<double> hist(n_bins, 1.0);
+  auto enc_hist = plugin->BuildEncryptedHistHori(hist);
+  auto plain_hist = plugin->SyncEncryptedHistHori(enc_hist);
+  ASSERT_EQ(hist.size(), plain_hist.size());
+  for (std::size_t i = 0; i < hist.size(); ++i) {
+    ASSERT_EQ(plain_hist[i], hist[i]);
+  }
+}
+
+TEST(Collective, BroadcastGrad) {
+  std::int32_t n_workers{2};
+  collective::TestEncryptedGlobal(n_workers, [&] {
+    Context ctx;
+    MetaInfo info;
+    bst_idx_t n_samples = 16;
+    info.data_split_mode = DataSplitMode::kCol;
+    info.num_row_ = n_samples;
+    ASSERT_TRUE(info.IsVerticalFederated());
+    auto out_gpair = linalg::Zeros<GradientPair>(&ctx, n_samples, 1);
+    collective::BroadcastGradient(
+        &ctx, info,
+        [](linalg::Matrix<GradientPair>* out_gpair) {
+          out_gpair->Data()->Fill(GradientPair{3.0f, 3.0f});
+        },
+        &out_gpair);
+
+    auto h_gpair = out_gpair.HostView();
+    if (collective::GetRank() == 0) {
+      for (auto v : h_gpair) {
+        ASSERT_EQ(v.GetGrad(), 3.0f);
+        ASSERT_EQ(v.GetHess(), 3.0f);
+      }
+    } else {
+      for (auto v : h_gpair) {
+        ASSERT_EQ(v.GetGrad(), 0.0f);
+        ASSERT_EQ(v.GetHess(), 0.0f);
+      }
+    }
+  });
+}
 
 TEST_P(VerticalFederatedLearnerTest, Approx) {
   auto [objective, is_encrypted] = this->GetTestParam();
