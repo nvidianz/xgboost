@@ -16,6 +16,10 @@
 #include "categorical.h"
 #include "hist_util.h"
 
+#if defined(XGBOOST_USE_FEDERATED)
+#include "../../plugin/federated/federated_comm.h"  // for IsFederatedEncrypted
+#endif  // defined(XGBOOST_USE_FEDERATED)
+
 namespace xgboost::common {
 HostSketchContainer::HostSketchContainer(Context const *ctx, bst_bin_t max_bin,
                                          Span<FeatureType const> feature_types,
@@ -306,6 +310,14 @@ struct CategoricalReducePayload {
   std::vector<std::size_t> offsets_;
   Span<float const> values_;
 };
+
+[[nodiscard]] bool IsSecureFederated(Context const *ctx) {
+#if defined(XGBOOST_USE_FEDERATED)
+  return collective::IsFederatedEncrypted(ctx);
+#else
+  return false;
+#endif  // defined(XGBOOST_USE_FEDERATED)
+}
 }  // anonymous namespace
 
 void HostSketchContainer::PushRowPage(SparsePage const &page, MetaInfo const &info,
@@ -579,7 +591,7 @@ HistogramCuts HostSketchContainer::MakeCuts(Context const *ctx, MetaInfo const &
     if (IsCat(feature_types_, fid)) {
       AddCategories(reduced_categories[categorical_index[fid]], &max_cat, p_cuts);
     } else {
-      AddCutPoints(ctx, reduced_numerical[fid], max_num_bins, p_cuts, collective::IsEncrypted());
+      AddCutPoints(ctx, reduced_numerical[fid], max_num_bins, p_cuts, IsSecureFederated(ctx));
     }
     // Ensure that every feature gets at least one quantile point
     CHECK_LE(p_cuts->cut_values_.HostVector().size(), std::numeric_limits<uint32_t>::max());

@@ -342,7 +342,7 @@ void DoTestColSplitQuantileSecure() {
   Context ctx;
   auto const world = collective::GetWorldSize();
   auto const rank = collective::GetRank();
-  ASSERT_TRUE(collective::IsEncrypted());
+  ASSERT_TRUE(collective::IsFederatedEncrypted(&ctx));
   size_t cols = 2;
   size_t rows = 3;
 
@@ -373,18 +373,18 @@ void DoTestColSplitQuantileSecure() {
   // Generate cuts for distributed environment.
   HistogramCuts distributed_cuts;
   {
-    ContainerType<use_column> sketch_distributed(
-        &ctx, n_bins, m->Info().feature_types.ConstHostSpan(), column_size, false);
+    HostSketchContainer sketch_distributed(&ctx, n_bins, m->Info().feature_types.ConstHostSpan(),
+                                           column_size, false);
 
     std::vector<float> hessian(rows, 1.0);
     auto hess = Span<float const>{hessian};
     if (use_column) {
       for (auto const& page : m->GetBatches<SortedCSCPage>(&ctx)) {
-        PushPage(&sketch_distributed, page, m->Info(), hess);
+        PushPage<use_column>(&sketch_distributed, page, m->Info(), hess);
       }
     } else {
       for (auto const& page : m->GetBatches<SparsePage>(&ctx)) {
-        PushPage(&sketch_distributed, page, m->Info(), hess);
+        PushPage<use_column>(&sketch_distributed, page, m->Info(), hess);
       }
     }
 

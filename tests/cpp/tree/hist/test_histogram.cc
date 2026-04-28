@@ -71,7 +71,7 @@ void TestAddHistRows(bool is_distributed) {
   HistMakerTrainParam hist_param;
   HistogramBuilder histogram_builder;
   histogram_builder.Reset(&ctx, gmat.cut.TotalBins(), {kMaxBins, 0.5}, is_distributed, false,
-                          false, &hist_param);
+                          &hist_param);
   histogram_builder.AddHistRows(tree.HostScView(), &nodes_to_build, &nodes_to_sub, false);
 
   for (bst_node_t const &nidx : nodes_to_build) {
@@ -103,7 +103,7 @@ void TestSyncHist(bool is_distributed) {
   HistogramBuilder histogram;
   uint32_t total_bins = gmat.cut.Ptrs().back();
   HistMakerTrainParam hist_param;
-  histogram.Reset(&ctx, total_bins, {kMaxBins, 0.5}, is_distributed, false, false, &hist_param);
+  histogram.Reset(&ctx, total_bins, {kMaxBins, 0.5}, is_distributed, false, &hist_param);
 
   common::RowSetCollection row_set_collection;
   {
@@ -246,7 +246,7 @@ void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read
   bst_node_t nid = 0;
   HistogramBuilder histogram;
   HistMakerTrainParam hist_param;
-  histogram.Reset(ctx, total_bins, {kMaxBins, 0.5}, is_distributed, is_col_split, is_secure, &hist_param);
+  histogram.Reset(ctx, total_bins, {kMaxBins, 0.5}, is_distributed, is_col_split, &hist_param);
 
   RegTree tree;
 
@@ -399,7 +399,7 @@ void TestHistogramCategorical(size_t n_categories, bool force_read_by_column) {
   HistogramBuilder cat_hist;
   for (auto const &gidx : cat_m->GetBatches<GHistIndexMatrix>(&ctx, {kBins, 0.5})) {
     auto total_bins = gidx.cut.TotalBins();
-    cat_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, false, &hist_param);
+    cat_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, &hist_param);
     cat_hist.AddHistRows(tree.HostScView(), &nodes_to_build, &dummy_sub, false);
     cat_hist.BuildHist(0, space, gidx, row_set_collection, nodes_to_build,
                        linalg::MakeTensorView(&ctx, gpair.ConstHostSpan(), gpair.Size()),
@@ -415,7 +415,7 @@ void TestHistogramCategorical(size_t n_categories, bool force_read_by_column) {
   HistogramBuilder onehot_hist;
   for (auto const &gidx : encode_m->GetBatches<GHistIndexMatrix>(&ctx, {kBins, 0.5})) {
     auto total_bins = gidx.cut.TotalBins();
-    onehot_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, false, &hist_param);
+    onehot_hist.Reset(&ctx, total_bins, {kBins, 0.5}, false, false, &hist_param);
     onehot_hist.AddHistRows(tree.HostScView(), &nodes_to_build, &dummy_sub, false);
     onehot_hist.BuildHist(0, space, gidx, row_set_collection, nodes_to_build,
                           linalg::MakeTensorView(&ctx, gpair.ConstHostSpan(), gpair.Size()),
@@ -483,7 +483,7 @@ void TestHistogramExternalMemory(Context const *ctx, BatchParam batch_param, boo
     }
     ASSERT_EQ(n_samples, m->Info().num_row_);
 
-    multi_build.Reset(ctx, total_bins, batch_param, false, false, false, &hist_param);
+    multi_build.Reset(ctx, total_bins, batch_param, false, false, &hist_param);
     multi_build.AddHistRows(tree.HostScView(), &nodes, &dummy_sub, false);
     std::size_t page_idx{0};
     for (auto const &page : m->GetBatches<GHistIndexMatrix>(ctx, batch_param)) {
@@ -506,7 +506,7 @@ void TestHistogramExternalMemory(Context const *ctx, BatchParam batch_param, boo
     common::RowSetCollection row_set_collection;
     InitRowPartitionForTest(&row_set_collection, n_samples);
 
-    single_build.Reset(ctx, total_bins, batch_param, false, false, false, &hist_param);
+    single_build.Reset(ctx, total_bins, batch_param, false, false, &hist_param);
     SparsePage concat;
     std::vector<float> hess(m->Info().num_row_, 1.0f);
     for (auto const &page : m->GetBatches<SparsePage>()) {
@@ -583,7 +583,7 @@ class OverflowTest : public ::testing::TestWithParam<std::tuple<bool, bool>> {
     CHECK_EQ(Xy->Info().IsColumnSplit(), is_col_split);
 
     hist_builder.Reset(&ctx, n_total_bins, tree.NumTargets(), batch, is_distributed,
-                       Xy->Info().IsColumnSplit(), collective::IsEncrypted(), &hist_param);
+                       Xy->Info().IsColumnSplit(), &hist_param);
 
     std::vector<CommonRowPartitioner> partitioners;
     partitioners.emplace_back(&ctx, Xy->Info().num_row_, /*base_rowid=*/0,

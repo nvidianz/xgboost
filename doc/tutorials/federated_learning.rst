@@ -428,7 +428,7 @@ This tutorial assumes an **honest-but-curious** setting: parties follow the prot
 may inspect received data to infer private information.
 
 The table below lists the key risks in each FL mode and how HE addresses them. All
-branches in the code are gated by ``collective::IsEncrypted()``.
+branches in the code are gated by the federated encryption helper.
 
 **Horizontal FL risks**
 
@@ -557,7 +557,7 @@ With the plugin system, in **secure horizontal FL**, the training loop proceeds 
 
    In the code this replaces ``AllReduceHist`` with ``AllReduceHistEncrypted``
    (``updater_gpu_hist.cu``), gated by
-   ``collective::IsDistributed() && info_.IsRowSplit() && collective::IsEncrypted()``.
+   ``collective::IsDistributed() && info_.IsRowSplit() && collective::IsFederatedEncrypted()``.
 4. **Split finding**: unchanged — every worker evaluates splits on the (now-decrypted)
    aggregated histogram independently and arrives at the same best split.
 5. **Row partition update**: unchanged — each worker partitions its local rows according

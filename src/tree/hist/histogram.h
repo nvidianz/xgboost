@@ -112,7 +112,7 @@ class HistogramPolicyContainer : public BuildPolicy {
    *                         of using global rabit variable.
    */
   void Reset(Context const *ctx, bst_bin_t total_bins, BatchParam const &p, bool is_distributed,
-             bool is_col_split, bool /*is_secure*/, HistMakerTrainParam const *param) {
+             bool is_col_split, HistMakerTrainParam const *param) {
     param_ = p;
     hist_.Reset(total_bins, param->MaxCachedHistNodes(ctx->Device()));
     buffer_.Init(total_bins);
@@ -552,10 +552,11 @@ class MultiHistogramBuilder {
   }
 
   void Reset(Context const *ctx, bst_bin_t total_bins, bst_target_t n_targets, BatchParam const &p,
-             bool is_distributed, bool is_col_split, bool is_encrypted,
-             HistMakerTrainParam const *param) {
+             bool is_distributed, bool is_col_split, HistMakerTrainParam const *param) {
     ctx_ = ctx;
+    bool is_encrypted{false};
 #if defined(XGBOOST_USE_FEDERATED)
+    is_encrypted = collective::IsFederatedEncrypted(ctx);
     if (is_encrypted && !std::get_if<std::vector<FedHistogramBuilder>>(&target_builders_)) {
       target_builders_.emplace<std::vector<FedHistogramBuilder>>(n_targets);
     }
@@ -568,7 +569,7 @@ class MultiHistogramBuilder {
           target_builders.resize(n_targets);
           CHECK_GE(n_targets, 1);
           for (auto &v : target_builders) {
-            v.Reset(ctx, total_bins, p, is_distributed, is_col_split, /*is_secure=*/false, param);
+            v.Reset(ctx, total_bins, p, is_distributed, is_col_split, param);
           }
         },
         this->target_builders_);

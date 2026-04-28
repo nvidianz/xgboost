@@ -23,6 +23,14 @@
 
 namespace xgboost::collective {
 namespace detail {
+[[nodiscard]] inline bool IsFederatedEncrypted(Context const* ctx) {
+#if defined(XGBOOST_USE_FEDERATED)
+  return collective::IsFederatedEncrypted(ctx);
+#else
+  return false;
+#endif  // defined(XGBOOST_USE_FEDERATED)
+}
+
 template <typename Fn>
 [[nodiscard]] Result TryApplyWithLabels(Context const* ctx, Fn&& fn) {
   std::string msg;
@@ -214,12 +222,11 @@ T GlobalRatio(Context const* ctx, MetaInfo const& info, T dividend, T divisor) {
 template <typename GradFn>
 void BroadcastGradient(Context const* ctx, MetaInfo const& info, GradFn&& grad_fn,
                        linalg::Matrix<GradientPair>* out_gpair) {
-  if (info.IsVerticalFederated() && IsEncrypted()) {
+  if (info.IsVerticalFederated() && detail::IsFederatedEncrypted(ctx)) {
 #if defined(XGBOOST_USE_FEDERATED)
     // Need to encrypt the gradient before broadcasting.
     common::Span<std::uint8_t> encrypted;
-    auto const& comm = GlobalCommGroup()->Ctx(ctx, DeviceOrd::CPU());
-    auto const& fed = dynamic_cast<FederatedComm const&>(comm);
+    auto plugin = GetFederatedPlugin(ctx);
     if (GetRank() == 0) {
       // Obtain the gradient
       grad_fn(out_gpair);
@@ -229,7 +236,7 @@ void BroadcastGradient(Context const* ctx, MetaInfo const& info, GradFn&& grad_f
       auto casted = reinterpret_cast<float const*>(values.data());
       auto data = common::Span{casted, values.size() * 2};
 
-      encrypted = fed.EncryptionPlugin()->EncryptGradient(data);
+      encrypted = plugin->EncryptGradient(data);
     }
     // Broadcast the gradient
     std::uint64_t n_bytes = encrypted.size();
@@ -241,11 +248,11 @@ void BroadcastGradient(Context const* ctx, MetaInfo const& info, GradFn&& grad_f
         grad.Resize(n_bytes);
         encrypted = grad.HostSpan();
       }
-      return Broadcast(ctx, linalg::MakeVec(encrypted), 0);
+      return Broadcast(ctx, linalg::MakeVec(DeviceOrd::CPU(), encrypted), 0);
     };
     SafeColl(rc);
     // Pass the gradient to the plugin
-    fed.EncryptionPlugin()->SyncEncryptedGradient(encrypted);
+    plugin->SyncEncryptedGradient(encrypted);
 
     // !!!Temporarily solution
     // This step is needed for memory allocation in the case of vertical secure GPU

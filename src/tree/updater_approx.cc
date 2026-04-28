@@ -94,7 +94,7 @@ class GlobalApproxBuilder {
 
     histogram_builder_.Reset(ctx_, n_total_bins, p_tree->NumTargets(), BatchSpec(*param_, hess),
                              collective::IsDistributed(), p_fmat->Info().IsColumnSplit(),
-                             collective::IsEncrypted(), hist_param_);
+                             hist_param_);
     monitor_->Stop(__func__);
   }
 
