@@ -620,6 +620,7 @@ HistogramCuts HostSketchContainer::MakeCuts(Context const *ctx, MetaInfo const &
     } else {
       AddCutPoints(ctx, reduced_numerical[fid], max_num_bins, p_cuts, IsSecureFederated(ctx));
     }
+
     // Ensure that every feature gets at least one quantile point
     CHECK_LE(p_cuts->cut_values_.HostVector().size(), std::numeric_limits<uint32_t>::max());
     auto cut_size = static_cast<uint32_t>(p_cuts->cut_values_.HostVector().size());

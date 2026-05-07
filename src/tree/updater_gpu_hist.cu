@@ -132,6 +132,7 @@ struct GPUHistMakerDevice {
     }
     return nodes;
   }
+
  public:
   linalg::Matrix<GradientPairInt64> d_gpair;  // storage for gpair;
   dh::device_vector<int> monotone_constraints;

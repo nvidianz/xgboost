@@ -4,12 +4,12 @@
 #ifndef XGBOOST_TREE_HIST_HISTOGRAM_H_
 #define XGBOOST_TREE_HIST_HISTOGRAM_H_
 
-#include <algorithm>  // for max
-#include <cstddef>    // for size_t
-#include <cstdint>    // for int32_t
-#include <utility>    // for move
-#include <variant>    // for variant
-#include <vector>     // for vector
+#include <algorithm>   // for max
+#include <cstddef>     // for size_t
+#include <cstdint>     // for int32_t
+#include <utility>     // for move
+#include <variant>     // for variant
+#include <vector>      // for vector
 
 #include "../../collective/allreduce.h"    // for Allreduce
 #include "../../common/hist_util.h"        // for GHistRow, ParallelGHi...
