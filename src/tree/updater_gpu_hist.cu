@@ -312,7 +312,7 @@ struct GPUHistMakerDevice {
 
     // Reduce all in one go
     // This gives much better latency in a distributed setting when processing a large batch
-    this->histogram_.AllReduceHist(ctx_, p_fmat->Info(), build_nidx.at(0), build_nidx.size());
+    this->AllReduceHist(p_fmat, build_nidx.at(0), build_nidx.size());
     // Perform subtraction for sibiling nodes
     auto need_build = this->histogram_.SubtractHist(ctx_, candidates, build_nidx, subtraction_nidx);
     if (need_build.empty()) {
@@ -329,7 +329,7 @@ struct GPUHistMakerDevice {
       ++k;
     }
     for (auto nidx : need_build) {
-      this->histogram_.AllReduceHist(ctx_, p_fmat->Info(), nidx, 1);
+      this->AllReduceHist(p_fmat, nidx, 1);
     }
     this->monitor.Stop(__func__);
   }
@@ -651,19 +651,37 @@ struct GPUHistMakerDevice {
     // reinterpret the aggregated histogram as a int64_t and aggregate
     auto hist_aggr_64 = common::Span{
         reinterpret_cast<std::int64_t *>(hist_aggr.data()), hist_aggr.size()};
-    int num_ranks = collective::GlobalCommGroup()->World();
-    for (size_t i = 0; i < n; i++) {
-      for (int j = 1; j < num_ranks; j++) {
+    auto num_ranks = collective::GlobalCommGroup()->World();
+    for (std::size_t i = 0; i < n; ++i) {
+      for (int j = 1; j < num_ranks; ++j) {
         hist_aggr_64[i] = hist_aggr_64[i] + hist_aggr_64[i + j * n];
       }
     }
 
     // copy the aggregated histogram back to GPU memory
-    cudaMemcpy(erased.data(), hist_aggr_64.data(), erased.size(), cudaMemcpyHostToDevice);
+    dh::safe_cuda(
+        cudaMemcpy(erased.data(), hist_aggr_64.data(), erased.size(), cudaMemcpyHostToDevice));
 
     monitor.Stop(__func__);
   }
 #endif
+
+  void AllReduceHist(DMatrix* p_fmat, bst_node_t nidx, int num_histograms) {
+    bool is_encrypted{false};
+#if defined(XGBOOST_USE_FEDERATED)
+    is_encrypted = collective::IsFederatedEncrypted(ctx_);
+#endif  // defined(XGBOOST_USE_FEDERATED)
+
+    if (collective::IsDistributed() && p_fmat->Info().IsRowSplit() && is_encrypted) {
+#if defined(XGBOOST_USE_FEDERATED)
+      this->AllReduceHistEncrypted(nidx, num_histograms);
+#else
+      LOG(FATAL) << error::NoFederated();
+#endif
+    } else {
+      this->histogram_.AllReduceHist(ctx_, p_fmat->Info(), nidx, num_histograms);
+    }
+  }
 
   void ApplySplit(const GPUExpandEntry& candidate, RegTree* p_tree) {
     RegTree& tree = *p_tree;
@@ -732,19 +750,7 @@ struct GPUHistMakerDevice {
       this->BuildHist(page, k, kRootNIdx);
       ++k;
     }
-    bool is_encrypted{false};
-#if defined(XGBOOST_USE_FEDERATED)
-    is_encrypted = collective::IsFederatedEncrypted(ctx_);
-#endif  // defined(XGBOOST_USE_FEDERATED)
-    if (collective::IsDistributed() && p_fmat->Info().IsRowSplit() && is_encrypted) {
-#if defined(XGBOOST_USE_FEDERATED)
-      this->AllReduceHistEncrypted(kRootNIdx, 1);
-#else
-      LOG(FATAL) << error::NoFederated();
-#endif
-    } else {
-      this->histogram_.AllReduceHist(ctx_, p_fmat->Info(), kRootNIdx, 1);
-    }
+    this->AllReduceHist(p_fmat, kRootNIdx, 1);
 
     // Remember root stats
     auto root_sum = (*this->quantiser)[0].ToFloatingPoint(root_sum_quantised);

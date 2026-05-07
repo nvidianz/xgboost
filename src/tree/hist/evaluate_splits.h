@@ -287,15 +287,13 @@ class HistEvaluator {
     CHECK_LE(cut_ptr[fidx + 1], static_cast<uint32_t>(std::numeric_limits<bst_bin_t>::max()));
     // ibegin, iend: smallest/largest cut points for feature fid use int to allow for
     // value -1
-    bst_bin_t ibegin, iend, imin;
+    bst_bin_t ibegin, iend;
     if (d_step > 0) {
       ibegin = static_cast<bst_bin_t>(cut_ptr[fidx]);
       iend = static_cast<bst_bin_t>(cut_ptr.at(fidx + 1));
-      imin = ibegin;
     } else {
       ibegin = static_cast<bst_bin_t>(cut_ptr[fidx + 1]) - 1;
       iend = static_cast<bst_bin_t>(cut_ptr[fidx]) - 1;
-      imin = iend + 1;
     }
     bool enc_vertical = is_secure_ && is_col_split_;
 
@@ -326,15 +324,13 @@ class HistEvaluator {
               static_cast<float>(evaluator.CalcSplitGain(*param_, nidx, fidx, GradStats{right_sum},
                                                          GradStats{left_sum}) -
                                  parent.root_gain);
-          if (!is_secure_) {
+          if (!enc_vertical) {
             split_pt = common::HistogramCuts::NumericBinLowerBound(cut_ptr, cut_val, fidx, i);
             best.Update(loss_chg, fidx, split_pt, d_step == -1, false, right_sum, left_sum);
           } else {
             // secure mode: record bin index as split point, actual value is not accessible here
-            if (i != imin) {
-              i = i - 1;
-            }
-            best.Update(loss_chg, fidx, i, d_step == -1, false, right_sum, left_sum);
+            auto split_idx = i == static_cast<bst_bin_t>(cut_ptr[fidx]) ? i : i - 1;
+            best.Update(loss_chg, fidx, split_idx, d_step == -1, false, right_sum, left_sum);
           }
         }
       }
@@ -440,8 +436,9 @@ class HistEvaluator {
         // and workers can recover the actual split value with the split index
         // Note that after the recovery, different workers will hold different
         // split_value: real value for feature owner, NaN for others
-        for (auto & entry : entries) {
-          auto cut_index = entry.split.split_value;
+        for (auto &entry : entries) {
+          auto cut_index = static_cast<std::size_t>(entry.split.split_value);
+          CHECK_LT(cut_index, cut.Values().size());
           entry.split.split_value = cut.Values()[cut_index];
         }
       }

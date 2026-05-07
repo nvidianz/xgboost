@@ -254,7 +254,7 @@ void BroadcastGradient(Context const* ctx, MetaInfo const& info, GradFn&& grad_f
     // Pass the gradient to the plugin
     plugin->SyncEncryptedGradient(encrypted);
 
-    // !!!Temporarily solution
+    // Temporary solution
     // This step is needed for memory allocation in the case of vertical secure GPU
     // make out_gpair data value to all zero to avoid information leak
     auto gpair_data = out_gpair->Data();

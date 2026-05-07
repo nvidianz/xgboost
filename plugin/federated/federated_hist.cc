@@ -25,7 +25,7 @@ auto CopyBinsToDense(Context const *ctx, GHistIndexMatrix const &gidx) {
 }  // namespace
 
 template <bool any_missing>
-void FederataedHistPolicy::DoBuildLocalHistograms(
+void FederatedHistPolicy::DoBuildLocalHistograms(
     common::BlockedSpace2d const &space, GHistIndexMatrix const &gidx,
     std::vector<bst_node_t> const &nodes_to_build,
     common::RowSetCollection const &row_set_collection, common::Span<GradientPair const> gpair_h,
@@ -60,12 +60,12 @@ void FederataedHistPolicy::DoBuildLocalHistograms(
   }
 }
 
-template void FederataedHistPolicy::DoBuildLocalHistograms<true>(
+template void FederatedHistPolicy::DoBuildLocalHistograms<true>(
     common::BlockedSpace2d const &space, GHistIndexMatrix const &gidx,
     std::vector<bst_node_t> const &nodes_to_build,
     common::RowSetCollection const &row_set_collection, common::Span<GradientPair const> gpair_h,
     bool force_read_by_column, common::ParallelGHistBuilder *buffer);
-template void FederataedHistPolicy::DoBuildLocalHistograms<false>(
+template void FederatedHistPolicy::DoBuildLocalHistograms<false>(
     common::BlockedSpace2d const &space, GHistIndexMatrix const &gidx,
     std::vector<bst_node_t> const &nodes_to_build,
     common::RowSetCollection const &row_set_collection, common::Span<GradientPair const> gpair_h,
@@ -110,7 +110,7 @@ void GatherWorkerHist(common::Span<double> hist_aggr, std::int32_t n_workers,
 }
 }  // namespace
 
-void FederataedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
+void FederatedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
                                            std::vector<bst_node_t> const &nodes_to_build,
                                            std::vector<bst_node_t> const &nodes_to_trick,
                                            common::ParallelGHistBuilder *p_buffer,
@@ -145,7 +145,7 @@ void FederataedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
       // Merging histograms from each thread.
       p_buffer->ReduceHist(node, r.begin(), r.end());
     });
-    // Encrtyped mode, we need to call the plugin to perform encryption and decryption.
+    // Encrypted mode, we need to call the plugin to perform encryption and decryption.
     auto first_nidx = nodes_to_build.front();
     std::size_t n = n_total_bins * nodes_to_build.size() * kHist2F64;
     auto src_hist = common::Span{reinterpret_cast<double const *>(hist[first_nidx].data()), n};

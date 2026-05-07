@@ -29,7 +29,7 @@
 #include "xgboost/tree_model.h"            // for RegTree
 
 #if defined(XGBOOST_USE_FEDERATED)
-#include "../../../plugin/federated/federated_hist.h"  // for FederataedHistPolicy
+#include "../../../plugin/federated/federated_hist.h"  // for FederatedHistPolicy
 #else
 #include "../../common/error_msg.h"  // for NoFederated
 #endif
@@ -308,7 +308,7 @@ class DefaultHistPolicy {
 
 using HistogramBuilder = HistogramPolicyContainer<DefaultHistPolicy>;
 #if defined(XGBOOST_USE_FEDERATED)
-using FedHistogramBuilder = HistogramPolicyContainer<FederataedHistPolicy>;
+using FedHistogramBuilder = HistogramPolicyContainer<FederatedHistPolicy>;
 #endif  // defined(XGBOOST_USE_FEDERATED)
 
 // Construct a work space for building histogram.  Eventually we should move this
@@ -559,6 +559,9 @@ class MultiHistogramBuilder {
     is_encrypted = collective::IsFederatedEncrypted(ctx);
     if (is_encrypted && !std::get_if<std::vector<FedHistogramBuilder>>(&target_builders_)) {
       target_builders_.emplace<std::vector<FedHistogramBuilder>>(n_targets);
+    } else if (!is_encrypted &&
+               !std::get_if<std::vector<HistogramBuilder>>(&target_builders_)) {
+      target_builders_.emplace<std::vector<HistogramBuilder>>(n_targets);
     }
 #else
     CHECK(!is_encrypted) << error::NoFederated();

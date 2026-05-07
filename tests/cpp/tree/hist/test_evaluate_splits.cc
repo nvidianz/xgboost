@@ -448,6 +448,7 @@ void DoTestEvaluateSplitsSecure(bool force_read_by_column) {
   Context ctx;
   auto const world = collective::GetWorldSize();
   auto const rank = collective::GetRank();
+  ASSERT_TRUE(collective::IsFederatedEncrypted(&ctx));
   int static constexpr kRows = 8, kCols = 16;
   auto sampler = std::make_shared<common::ColumnSampler>();
 
@@ -521,7 +522,7 @@ void DoTestEvaluateSplitsSecure(bool force_read_by_column) {
 #if defined(XGBOOST_USE_FEDERATED)
 void TestEvaluateSplitsSecure(bool force_read_by_column) {
   auto constexpr kWorkers = 2;
-  collective::TestFederatedGlobal(kWorkers,
+  collective::TestEncryptedGlobal(kWorkers,
                                   [&] { DoTestEvaluateSplitsSecure(force_read_by_column); });
 }
 #endif  // defined(XGBOOST_USE_FEDERATED)
