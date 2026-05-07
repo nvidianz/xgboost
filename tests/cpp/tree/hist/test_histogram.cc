@@ -227,11 +227,11 @@ TEST(CPUHistogram, SyncHist) {
 }
 
 void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read_by_column,
-                        bool is_col_split, bool is_secure) {
+                        bool is_col_split) {
   size_t constexpr kNRows = 8, kNCols = 16;
   int32_t constexpr kMaxBins = 4;
   auto p_fmat = RandomDataGenerator(kNRows, kNCols, 0.8).Seed(3).GenerateDMatrix();
-  if (is_col_split && !is_secure) {
+  if (is_col_split) {
     p_fmat = std::shared_ptr<DMatrix>{
         p_fmat->SliceCol(collective::GetWorldSize(), collective::GetRank())};
   }
@@ -304,10 +304,10 @@ void TestBuildHistogram(Context const *ctx, bool is_distributed, bool force_read
 
 TEST(CPUHistogram, BuildHist) {
   Context ctx;
-  TestBuildHistogram(&ctx, true, false, false, false);
-  TestBuildHistogram(&ctx, false, false, false, false);
-  TestBuildHistogram(&ctx, true, true, false, false);
-  TestBuildHistogram(&ctx, false, true, false, false);
+  TestBuildHistogram(&ctx, true, false, false);
+  TestBuildHistogram(&ctx, false, false, false);
+  TestBuildHistogram(&ctx, true, true, false);
+  TestBuildHistogram(&ctx, false, true, false);
 }
 
 TEST(CPUHistogram, BuildHistColumnSplit) {
@@ -316,31 +316,19 @@ TEST(CPUHistogram, BuildHistColumnSplit) {
   std::int32_t n_total_threads = std::thread::hardware_concurrency();
   auto n_threads = std::max(n_total_threads / kWorkers, 1);
   ctx.UpdateAllowUnknown(Args{{"nthread", std::to_string(n_threads)}});
-  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, true, true, false); });
-  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, false, true, false); });
+  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, true, true); });
+  collective::TestDistributedGlobal(kWorkers, [&] { TestBuildHistogram(&ctx, true, false, true); });
 }
 
 TEST(CPUHistogram, BuildHistDist) {
   auto constexpr kWorkers = 4;
   collective::TestDistributedGlobal(kWorkers, [] {
     Context ctx;
-    TestBuildHistogram(&ctx, true, false, false, false);
+    TestBuildHistogram(&ctx, true, false, false);
   });
   collective::TestDistributedGlobal(kWorkers, [] {
     Context ctx;
-    TestBuildHistogram(&ctx, true, true, false, false);
-  });
-}
-
-TEST(CPUHistogram, BuildHistDistColSplitSecure) {
-  auto constexpr kWorkers = 4;
-  collective::TestDistributedGlobal(kWorkers, [] {
-    Context ctx;
-    TestBuildHistogram(&ctx, true, true, true, true);
-  });
-  collective::TestDistributedGlobal(kWorkers, [] {
-    Context ctx;
-    TestBuildHistogram(&ctx, true, false, true, true);
+    TestBuildHistogram(&ctx, true, true, false);
   });
 }
 

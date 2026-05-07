@@ -3,6 +3,7 @@
  */
 #pragma once
 #include <cstdint>  // for int32_t
+#include <memory>   // for shared_ptr
 #include <vector>   // for vector
 
 #include "../../src/collective/comm_group.h"   // for GlobalCommGroup
@@ -21,11 +22,11 @@ namespace xgboost::tree {
 /**
  * @brief Federated histogram build policy
  */
-class FederataedHistPolicy {
+class FederatedHistPolicy {
   // fixme: duplicated code
   bool is_col_split_{false};
   bool is_distributed_{false};
-  decltype(std::declval<collective::FederatedComm>().EncryptionPlugin()) plugin_;
+  std::shared_ptr<collective::FederatedPluginBase> plugin_;
   xgboost::common::Span<std::uint8_t> hist_data_;
   // Only initialize the aggregation context once
   bool is_gidx_initialized_{false};
@@ -40,7 +41,7 @@ class FederataedHistPolicy {
     auto const &comm = collective::GlobalCommGroup()->Ctx(ctx, DeviceOrd::CPU());
     auto const &fed = dynamic_cast<collective::FederatedComm const &>(comm);
     plugin_ = fed.EncryptionPlugin();
-    CHECK(is_distributed_) << "Unreachable. Single node training can not be federated.";
+    CHECK(is_distributed_) << "Unreachable. Single node training cannot be federated.";
   }
 
   template <bool any_missing>

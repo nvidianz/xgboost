@@ -46,7 +46,7 @@ void FederatedPluginMock::Reset(common::Span<std::uint32_t const> cutptrs,
   bst_feature_t n_features = cuts_.size() - 1;
   bst_idx_t n_samples = bin_idx.size() / n_features;
 
-  // For now, the gmat cannot be dense due to limiation of of encrypted training where
+  // For now, the gmat cannot be dense due to a limitation of encrypted training where
   // indices from other parties are marked as missing instead.
   gmat_.row_ptr = common::MakeFixedVecWithMalloc(n_samples + 1, std::size_t{0});
   auto gidx = linalg::MakeTensorView(&ctx_, bin_idx, n_samples, n_features);

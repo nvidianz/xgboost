@@ -15,8 +15,8 @@
  * Since we don't require the plugin to have network capability, the synchronization is
  * performed in XGBoost. As a result, the build procedure is divided into four steps,
  * first we need to build a local histogram, then encrypt it with the plugin. Afterward,
- * the control returns to XBGoost, which is responsible for synchronization. Lastly, the
- * plugin will recieve the synchronization result and return the decrypted histogram.
+ * the control returns to XGBoost, which is responsible for synchronization. Lastly, the
+ * plugin will receive the synchronization result and return the decrypted histogram.
  *
  * See below function prototypes for details. All prototypes are for C functions that are
  * suitable for `dlopen`.
@@ -56,7 +56,7 @@ using CreateFn = FederatedPluginHandle(int, char const **);
  *
  *  Symbol name: `FederatedPluginClose`.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using CloseFn = int(FederatedPluginHandle);
 /**
@@ -79,7 +79,7 @@ using ErrorFn = char const *();
  *
  *  Symbol name: `FederatedPluginEncryptGPairs`.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using EncryptFn = int(FederatedPluginHandle handle, float const *in_gpair, size_t n_in,
                       uint8_t **out_gpair, size_t *n_out);
@@ -88,7 +88,7 @@ using EncryptFn = int(FederatedPluginHandle handle, float const *in_gpair, size_
  *
  *  Symbol name: `FederatedPluginSyncEncryptedGPairs`.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using SyncEncryptFn = int(FederatedPluginHandle handle, uint8_t const *in_gpair, size_t n_bytes,
                           uint8_t **out_gpair, size_t *n_out);
@@ -110,7 +110,7 @@ using SyncEncryptFn = int(FederatedPluginHandle handle, uint8_t const *in_gpair,
  * @param bin_idx Gradient index of the histogram.
  * @param n_idx The number of indices. Equals to the size of the dataset, stored in row-major.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using ResetHistCtxVertFn = int(FederatedPluginHandle handle, uint32_t const *cutptrs,
                                size_t cutptr_len, int32_t const *bin_idx, size_t n_idx);
@@ -126,7 +126,7 @@ using ResetHistCtxVertFn = int(FederatedPluginHandle handle, uint32_t const *cut
  * @param out_hist Output histogram.
  * @param out_len  The size of the output histogram.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using BuildHistVertFn = int(FederatedPluginHandle handle, uint64_t const **ridx,
                             size_t const *sizes, int32_t const *nidx, size_t len,
@@ -141,7 +141,7 @@ using BuildHistVertFn = int(FederatedPluginHandle handle, uint64_t const **ridx,
  * @param out     Reduced histogram.
  * @param out_len The size of the reduced histogram.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using SyncHistVertFn = int(FederatedPluginHandle handle, uint8_t *in_hist, size_t len,
                            double **out_hist, size_t *out_len);
@@ -162,7 +162,7 @@ using SyncHistVertFn = int(FederatedPluginHandle handle, uint8_t *in_hist, size_
  * @param out_hist Encrypted histogram.
  * @param out_len  The size of the encrypted histogram.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using BuildHistHoriFn = int(FederatedPluginHandle handle, double const *in_hist, size_t len,
                             uint8_t **out_hist, size_t *out_len);
@@ -176,7 +176,7 @@ using BuildHistHoriFn = int(FederatedPluginHandle handle, double const *in_hist,
  * @param out_hist Output histogram.
  * @param out_len  The size of the output histogram.
  *
- * @return 0 if succees.
+ * @return 0 if succeeds.
  */
 using SyncHistHoriFn = int(FederatedPluginHandle handle, uint8_t const *in_hist, size_t len,
                            double **out_hist, size_t *out_len);
@@ -213,7 +213,7 @@ class FederatedPluginBase {
       common::Span<std::uint8_t const> hist) = 0;
 };
 
-// Only used for testing, this class is an no-op implementation.
+// Only used for testing, this class is a no-op implementation.
 class FederatedPluginMock : public FederatedPluginBase {
   Context ctx_;
   std::vector<std::uint8_t> grad_;
