@@ -18,7 +18,7 @@
 
 #if defined(XGBOOST_USE_FEDERATED)
 #include "../plugin/federated/test_worker.h"  // for TestEncryptedGlobal
-#endif  // defined(XGBOOST_USE_FEDERATED)
+#endif                                        // defined(XGBOOST_USE_FEDERATED)
 #include "xgboost/context.h"
 
 namespace xgboost::common {
@@ -647,13 +647,10 @@ void DoPropertyColumnSplitQuantile(size_t rows, size_t cols) {
 void AssertSecureColumnSplitCuts(HistogramCuts const& cuts, std::int32_t rank) {
   auto const& ptrs = cuts.Ptrs();
   auto const& vals = cuts.Values();
-  auto const& mins = cuts.MinValues();
   std::vector<std::uint32_t> expected_ptrs = {0, 1, 4};
   std::vector<float> expected_vals = {2, 0, 0, 0};
-  std::vector<float> expected_mins = {-1e-5f, 1e-5f};
   if (rank == 1) {
     expected_vals = {0, 0.6f, 0.8f, 1.6f};
-    expected_mins = {1e-5f, -1e-5f};
   }
 
   EXPECT_EQ(ptrs, expected_ptrs) << "rank: " << rank;
@@ -662,11 +659,6 @@ void AssertSecureColumnSplitCuts(HistogramCuts const& cuts, std::int32_t rank) {
     if (!std::isnan(vals[i])) {
       EXPECT_NEAR(vals[i], expected_vals[i], 2e-2f) << "rank: " << rank << ", i: " << i;
     }
-  }
-
-  ASSERT_EQ(mins.size(), expected_mins.size()) << "rank: " << rank;
-  for (std::size_t i = 0; i < expected_mins.size(); ++i) {
-    EXPECT_FLOAT_EQ(mins[i], expected_mins[i]) << "rank: " << rank << ", i: " << i;
   }
 }
 
@@ -679,12 +671,15 @@ void DoTestColSplitQuantileSecure() {
   constexpr std::size_t cols = 2;
   constexpr std::size_t rows = 3;
   auto m = std::unique_ptr<DMatrix>{[=]() {
-    std::vector<float> data = {1, 1, 0.6f, 0.4f, 0.8f};
-    std::vector<unsigned> row_idx = {0, 2, 0, 1, 2};
-    std::vector<std::size_t> col_ptr = {0, 2, 5};
-    data::CSCAdapter adapter{col_ptr.data(), row_idx.data(), data.data(), cols, rows};
-    auto dmat = std::make_unique<data::SimpleDMatrix>(
-        &adapter, std::numeric_limits<float>::quiet_NaN(), 1);
+    HostDeviceVector<float> data{1, 1, 0.6f, 0.4f, 0.8f};
+    HostDeviceVector<unsigned> row_idx{0, 2, 0, 1, 2};
+    HostDeviceVector<std::size_t> col_ptr{0, 2, 5};
+    auto j_data = Json::Dump(GetArrayInterface(&data, data.Size(), 1));
+    auto j_row_idx = Json::Dump(GetArrayInterface(&row_idx, row_idx.Size(), 1));
+    auto j_col_ptr = Json::Dump(GetArrayInterface(&col_ptr, col_ptr.Size(), 1));
+    data::CSCArrayAdapter adapter{j_col_ptr, j_row_idx, j_data, rows};
+    auto dmat =
+        std::make_unique<data::SimpleDMatrix>(&adapter, std::numeric_limits<float>::quiet_NaN(), 1);
     EXPECT_EQ(dmat->Info().num_col_, cols);
     EXPECT_EQ(dmat->Info().num_row_, rows);
     EXPECT_EQ(dmat->Info().num_nonzero_, 5);

@@ -16,6 +16,8 @@
 
 #include "../../src/collective/comm.h"  // for Op
 #include "../collective/aggregator.h"
+#include "../collective/allgather.h"  // for AllgatherV
+#include "../collective/communicator-inl.h"
 #include "../common/categorical.h"     // for KCatBitField
 #include "../common/cuda_context.cuh"  // for CUDAContext
 #include "../common/cuda_rt_utils.h"   // for SetDevice
@@ -56,9 +58,6 @@
 #include "xgboost/task.h"                // for ObjInfo
 #include "xgboost/tree_model.h"          // for RegTree
 #include "xgboost/tree_updater.h"        // for TreeUpdater
-
-#include "../collective/communicator-inl.h"
-#include "../collective/allgather.h"         // for AllgatherV
 
 #if defined(XGBOOST_USE_FEDERATED)
 #include "../../plugin/federated/federated_comm.h"  // for FederatedComm
@@ -624,44 +623,55 @@ struct GPUHistMakerDevice {
 
     // Get the histogram data
     auto d_node_hist = histogram_.GetNodeHistogram(nidx);
-    using ReduceT = typename std::remove_pointer<decltype(d_node_hist.data())>::type::ValueT;
-    std::size_t n = d_node_hist.size() * 2 * num_histograms;
-    auto hist_vec =
-        linalg::MakeVec(reinterpret_cast<ReduceT*>(d_node_hist.data()), n, ctx_->Device());
+    std::size_t n_pairs = d_node_hist.size() * num_histograms;
 
     // copy the histogram out of GPU memory
-    common::Span<std::int8_t> erased = common::EraseType(hist_vec.Values());
-    std::vector<std::int8_t> h_data(erased.size());
-    dh::safe_cuda(cudaMemcpy(h_data.data(), erased.data(), erased.size(), cudaMemcpyDeviceToHost));
+    std::vector<GradientPairInt64> h_quantized(n_pairs);
+    dh::safe_cuda(cudaMemcpy(h_quantized.data(), d_node_hist.data(),
+                             h_quantized.size() * sizeof(GradientPairInt64),
+                             cudaMemcpyDeviceToHost));
+
+    auto const& quantiser = (*this->quantiser)[0];
+    std::vector<double> h_hist(n_pairs * 2);
+    for (std::size_t i = 0; i < n_pairs; ++i) {
+      auto gpair = quantiser.ToFloatingPoint(h_quantized[i]);
+      h_hist[i * 2] = gpair.GetGrad();
+      h_hist[i * 2 + 1] = gpair.GetHess();
+    }
 
     // call the encryption plugin
-    auto src_hist = common::Span{reinterpret_cast<double const *>(h_data.data()), n};
+    auto src_hist = common::Span<double const>{h_hist.data(), h_hist.size()};
     auto hist_buf = plugin->BuildEncryptedHistHori(src_hist);
 
     // allgather
     HostDeviceVector<std::int8_t> hist_entries;
     std::vector<std::int64_t> recv_segments;
-    auto rc = collective::AllgatherV(
-        ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_buf), &recv_segments, &hist_entries);
+    auto rc = collective::AllgatherV(ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_buf),
+                                     &recv_segments, &hist_entries);
     collective::SafeColl(rc);
 
     // call the encryption plugin to decode the histograms
-    auto hist_aggr = plugin->SyncEncryptedHistHori(
-            common::RestoreType<std::uint8_t>(hist_entries.HostSpan()));
+    auto hist_aggr =
+        plugin->SyncEncryptedHistHori(common::RestoreType<std::uint8_t>(hist_entries.HostSpan()));
 
-    // reinterpret the aggregated histogram as a int64_t and aggregate
-    auto hist_aggr_64 = common::Span{
-        reinterpret_cast<std::int64_t *>(hist_aggr.data()), hist_aggr.size()};
     auto num_ranks = collective::GlobalCommGroup()->World();
-    for (std::size_t i = 0; i < n; ++i) {
-      for (int j = 1; j < num_ranks; ++j) {
-        hist_aggr_64[i] = hist_aggr_64[i] + hist_aggr_64[i + j * n];
+    CHECK_EQ(hist_aggr.size(), src_hist.size() * num_ranks);
+    std::vector<GradientPairInt64> h_quantized_aggr(n_pairs);
+    for (std::size_t i = 0; i < n_pairs; ++i) {
+      double grad{0.0};
+      double hess{0.0};
+      for (int j = 0; j < num_ranks; ++j) {
+        auto worker_hist = hist_aggr.subspan(j * src_hist.size(), src_hist.size());
+        grad += worker_hist[i * 2];
+        hess += worker_hist[i * 2 + 1];
       }
+      h_quantized_aggr[i] = quantiser.ToFixedPoint(GradientPairPrecise{grad, hess});
     }
 
     // copy the aggregated histogram back to GPU memory
-    dh::safe_cuda(
-        cudaMemcpy(erased.data(), hist_aggr_64.data(), erased.size(), cudaMemcpyHostToDevice));
+    dh::safe_cuda(cudaMemcpy(d_node_hist.data(), h_quantized_aggr.data(),
+                             h_quantized_aggr.size() * sizeof(GradientPairInt64),
+                             cudaMemcpyHostToDevice));
 
     monitor.Stop(__func__);
   }

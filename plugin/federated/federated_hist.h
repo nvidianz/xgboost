@@ -30,7 +30,7 @@ class FederatedHistPolicy {
   xgboost::common::Span<std::uint8_t> hist_data_;
   // Only initialize the aggregation context once
   bool is_gidx_initialized_{false};
-  Context const* ctx_;
+  Context const *ctx_;
 
  public:
   void DoReset(Context const *ctx, bool is_distributed, bool is_col_split) {

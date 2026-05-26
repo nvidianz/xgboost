@@ -10,25 +10,25 @@
 #include <dmlc/parameter.h>     // for FieldEntry, DMLC_DECLARE_FIELD, Parameter, DMLC...
 #include <dmlc/thread_local.h>  // for ThreadLocalStore
 
-#include <algorithm>      // for equal, max, transform, sort, find_if, all_of
-#include <atomic>         // for atomic
-#include <cctype>         // for isalpha, isspace
-#include <cmath>          // for isnan, isinf
-#include <cstdint>        // for int32_t, uint32_t, int64_t, uint64_t
-#include <cstdlib>        // for atoi
-#include <cstring>        // for memcpy, size_t, memset
-#include <iomanip>        // for operator<<, setiosflags
-#include <iterator>       // for back_insert_iterator, distance, back_inserter
-#include <limits>         // for numeric_limits
-#include <memory>         // for allocator, unique_ptr, shared_ptr, operator==
-#include <mutex>          // for mutex, lock_guard
-#include <sstream>        // for operator<<, basic_ostream, basic_ostream::opera...
-#include <stack>          // for stack
-#include <string>         // for basic_string, char_traits, operator<, string
-#include <system_error>   // for errc
-#include <tuple>          // for get
-#include <utility>        // for pair, as_const, move, swap
-#include <vector>         // for vector
+#include <algorithm>     // for equal, max, transform, sort, find_if, all_of
+#include <atomic>        // for atomic
+#include <cctype>        // for isalpha, isspace
+#include <cmath>         // for isnan, isinf
+#include <cstdint>       // for int32_t, uint32_t, int64_t, uint64_t
+#include <cstdlib>       // for atoi
+#include <cstring>       // for memcpy, size_t, memset
+#include <iomanip>       // for operator<<, setiosflags
+#include <iterator>      // for back_insert_iterator, distance, back_inserter
+#include <limits>        // for numeric_limits
+#include <memory>        // for allocator, unique_ptr, shared_ptr, operator==
+#include <mutex>         // for mutex, lock_guard
+#include <sstream>       // for operator<<, basic_ostream, basic_ostream::opera...
+#include <stack>         // for stack
+#include <string>        // for basic_string, char_traits, operator<, string
+#include <system_error>  // for errc
+#include <tuple>         // for get
+#include <utility>       // for pair, as_const, move, swap
+#include <vector>        // for vector
 
 #include "collective/aggregator.h"        // for ApplyWithLabels
 #include "collective/communicator-inl.h"  // for Allreduce, Broadcast, GetRank, IsDistributed

@@ -10,13 +10,13 @@
 #include <sstream>  // for stringstream
 
 #include "../../src/common/json_utils.h"  // for OptionalArg
-#include "../../src/data/gradient_index.h"
 #include "../../src/common/type.h"        // for RestoreType
-#include "xgboost/base.h"                 // for bst_bin_t, bst_feature_t
-#include "xgboost/json.h"                 // for Json
-#include "xgboost/logging.h"              // for CHECK_EQ
-#include "xgboost/span.h"                 // for Span
-#include "xgboost/string_view.h"          // for StringView
+#include "../../src/data/gradient_index.h"
+#include "xgboost/base.h"         // for bst_bin_t, bst_feature_t
+#include "xgboost/json.h"         // for Json
+#include "xgboost/logging.h"      // for CHECK_EQ
+#include "xgboost/span.h"         // for Span
+#include "xgboost/string_view.h"  // for StringView
 
 namespace xgboost::collective {
 void FederatedPluginMock::Reset(common::Span<std::uint32_t const> cutptrs,
@@ -36,8 +36,10 @@ void FederatedPluginMock::Reset(common::Span<std::uint32_t const> cutptrs,
     return bin >= 0;
   };
   std::size_t nnz = std::count_if(bin_idx.cbegin(), bin_idx.cend(), is_valid);
-  gmat_.ResizeIndex(&ctx_, nnz, /*is_dense=*/nnz == bin_idx.size());
-  gmat_.SetDense(nnz == bin_idx.size());
+  gmat_.cut.cut_ptrs_.HostVector() = cuts_;
+  gmat_.cut.cut_values_.HostVector().assign(cuts_.back(), 0.0f);
+  gmat_.ResizeIndex(&ctx_, nnz, /*is_dense=*/false);
+  gmat_.SetDense(false);
   common::DispatchBinType(gmat_.index.GetBinTypeSize(), [&](auto t) {
     auto data = gmat_.index.data<decltype(t)>();
     std::copy_if(bin_idx.cbegin(), bin_idx.cend(), data, is_valid);

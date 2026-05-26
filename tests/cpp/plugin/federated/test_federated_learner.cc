@@ -160,7 +160,7 @@ TEST(Collective, BroadcastGrad) {
     auto out_gpair = linalg::Zeros<GradientPair>(&ctx, n_samples, 1);
     collective::BroadcastGradient(
         &ctx, info,
-        [](linalg::Matrix<GradientPair>* out_gpair) {
+        [](linalg::Matrix<GradientPair> *out_gpair) {
           out_gpair->Data()->Fill(GradientPair{3.0f, 3.0f});
         },
         &out_gpair);
@@ -214,7 +214,8 @@ TEST_P(VerticalFederatedLearnerTest, GPUHist) {
 INSTANTIATE_TEST_SUITE_P(
     FederatedLearnerObjective, VerticalFederatedLearnerTest, ::testing::ValuesIn(MakeTestParams()),
     [](const ::testing::TestParamInfo<VerticalFederatedLearnerTest::ParamType> &info) {
-      auto name = ObjTestNameGenerator(std::get<0>(info.param));
+      auto name = ObjTestNameGenerator(
+          ::testing::TestParamInfo<std::string>{std::get<0>(info.param), info.index});
       if (std::get<1>(info.param)) {
         name += "_enc";
       }

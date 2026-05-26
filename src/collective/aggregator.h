@@ -227,7 +227,7 @@ void BroadcastGradient(Context const* ctx, MetaInfo const& info, GradFn&& grad_f
     // Need to encrypt the gradient before broadcasting.
     common::Span<std::uint8_t> encrypted;
     auto plugin = GetFederatedPlugin(ctx);
-    if (GetRank() == 0) {
+    auto rc = detail::TryApplyWithLabels(ctx, [&] {
       // Obtain the gradient
       grad_fn(out_gpair);
       auto values = out_gpair->HostView().Values();
@@ -237,11 +237,12 @@ void BroadcastGradient(Context const* ctx, MetaInfo const& info, GradFn&& grad_f
       auto data = common::Span{casted, values.size() * 2};
 
       encrypted = plugin->EncryptGradient(data);
-    }
+    });
+    SafeColl(rc);
     // Broadcast the gradient
     std::uint64_t n_bytes = encrypted.size();
     HostDeviceVector<std::uint8_t> grad;
-    auto rc = Success() << [&] {
+    rc = Success() << [&] {
       return Broadcast(ctx, linalg::MakeVec(&n_bytes, 1), 0);
     } << [&] {
       if (GetRank() != 0) {
@@ -254,12 +255,10 @@ void BroadcastGradient(Context const* ctx, MetaInfo const& info, GradFn&& grad_f
     // Pass the gradient to the plugin
     plugin->SyncEncryptedGradient(encrypted);
 
-    // Temporary solution
-    // This step is needed for memory allocation in the case of vertical secure GPU
-    // make out_gpair data value to all zero to avoid information leak
-    auto gpair_data = out_gpair->Data();
-    gpair_data->Fill(GradientPair{0.0f, 0.0f});
-    ApplyWithLabels(ctx, info, gpair_data, [&] { grad_fn(out_gpair); });
+    // Passive parties should keep allocated buffers without receiving plaintext gradients.
+    if (GetRank() != 0) {
+      out_gpair->Data()->Fill(GradientPair{});
+    }
 #else
     LOG(FATAL) << error::NoFederated();
 #endif

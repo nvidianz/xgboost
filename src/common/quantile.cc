@@ -18,7 +18,7 @@
 
 #if defined(XGBOOST_USE_FEDERATED)
 #include "../../plugin/federated/federated_comm.h"  // for IsFederatedEncrypted
-#endif  // defined(XGBOOST_USE_FEDERATED)
+#endif                                              // defined(XGBOOST_USE_FEDERATED)
 
 namespace xgboost::common {
 HostSketchContainer::HostSketchContainer(Context const *ctx, bst_bin_t max_bin,

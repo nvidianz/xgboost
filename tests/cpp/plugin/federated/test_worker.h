@@ -36,7 +36,6 @@ void TestFederatedImpl(std::int32_t n_workers, WorkerFn&& fn) {
   auto fut = tracker.Run();
 
   std::vector<std::thread> workers;
-  using namespace std::chrono_literals;
   auto rc = tracker.WaitUntilReady();
   SafeColl(rc);
   std::int32_t port = tracker.Port();

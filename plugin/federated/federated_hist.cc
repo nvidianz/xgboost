@@ -25,11 +25,13 @@ auto CopyBinsToDense(Context const *ctx, GHistIndexMatrix const &gidx) {
 }  // namespace
 
 template <bool any_missing>
-void FederatedHistPolicy::DoBuildLocalHistograms(
-    common::BlockedSpace2d const &space, GHistIndexMatrix const &gidx,
-    std::vector<bst_node_t> const &nodes_to_build,
-    common::RowSetCollection const &row_set_collection, common::Span<GradientPair const> gpair_h,
-    bool force_read_by_column, common::ParallelGHistBuilder *p_buffer) {
+void FederatedHistPolicy::DoBuildLocalHistograms(common::BlockedSpace2d const &space,
+                                                 GHistIndexMatrix const &gidx,
+                                                 std::vector<bst_node_t> const &nodes_to_build,
+                                                 common::RowSetCollection const &row_set_collection,
+                                                 common::Span<GradientPair const> gpair_h,
+                                                 bool force_read_by_column,
+                                                 common::ParallelGHistBuilder *p_buffer) {
   if (is_col_split_) {
     // Copy the gidx information to the secure worker for encrypted histogram
     // computation. This is copied as we don't want the plugin to handle the bin
@@ -111,10 +113,10 @@ void GatherWorkerHist(common::Span<double> hist_aggr, std::int32_t n_workers,
 }  // namespace
 
 void FederatedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
-                                           std::vector<bst_node_t> const &nodes_to_build,
-                                           std::vector<bst_node_t> const &nodes_to_trick,
-                                           common::ParallelGHistBuilder *p_buffer,
-                                           tree::BoundedHistCollection *p_hist) {
+                                          std::vector<bst_node_t> const &nodes_to_build,
+                                          std::vector<bst_node_t> const &nodes_to_trick,
+                                          common::ParallelGHistBuilder *p_buffer,
+                                          tree::BoundedHistCollection *p_hist) {
   auto n_total_bins = p_buffer->TotalBins();
   std::int32_t n_workers = collective::GetWorldSize();
   CHECK(!nodes_to_build.empty());
@@ -127,8 +129,8 @@ void FederatedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
     // Perform AllGather
     HostDeviceVector<std::int8_t> hist_entries;
     std::vector<std::int64_t> recv_segments;
-    collective::SafeColl(collective::AllgatherV(
-        ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_data_), &recv_segments, &hist_entries));
+    collective::SafeColl(collective::AllgatherV(ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_data_),
+                                                &recv_segments, &hist_entries));
 
     // Call the plugin here to get the resulting histogram. Histogram from all workers are
     // gathered to the label owner.
@@ -154,8 +156,8 @@ void FederatedHistPolicy::DoSyncHistogram(common::BlockedSpace2d const &space,
     // allgather
     HostDeviceVector<std::int8_t> hist_entries;
     std::vector<std::int64_t> recv_segments;
-    auto rc = collective::AllgatherV(
-        ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_buf), &recv_segments, &hist_entries);
+    auto rc = collective::AllgatherV(ctx_, linalg::MakeVec(DeviceOrd::CPU(), hist_buf),
+                                     &recv_segments, &hist_entries);
     collective::SafeColl(rc);
     CHECK_EQ(hist_entries.Size(), hist_buf.size() * n_workers);
 

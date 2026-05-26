@@ -31,7 +31,7 @@
 
 #if defined(XGBOOST_USE_FEDERATED)
 #include "../../../plugin/federated/federated_comm.h"  // for IsFederatedEncrypted
-#endif  // defined(XGBOOST_USE_FEDERATED)
+#endif                                                 // defined(XGBOOST_USE_FEDERATED)
 
 namespace xgboost::tree {
 /**
@@ -309,7 +309,8 @@ class HistEvaluator {
           // forward enumeration: split at right bound of each bin
           loss_chg =
               static_cast<float>(evaluator.CalcSplitGain(*param_, nidx, fidx, GradStats{left_sum},
-                                                         GradStats{right_sum}) - parent.root_gain);
+                                                         GradStats{right_sum}) -
+                                 parent.root_gain);
           if (!enc_vertical) {
             split_pt = cut_val[i];  // not used for partition based
             best.Update(loss_chg, fidx, split_pt, d_step == -1, false, left_sum, right_sum);

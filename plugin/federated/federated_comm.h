@@ -13,7 +13,7 @@
 
 #include "../../src/collective/comm.h"        // for HostComm
 #include "../../src/collective/comm_group.h"  // for GlobalCommGroup
-#include "federated_plugin.h"           // for FederatedPlugin
+#include "federated_plugin.h"                 // for FederatedPlugin
 #include "xgboost/json.h"
 
 namespace xgboost::collective {
@@ -27,7 +27,8 @@ class FederatedComm : public HostComm {
             std::string const& client_cert);
 
  protected:
-  explicit FederatedComm(std::shared_ptr<FederatedComm const> that) : stub_{that->stub_} {
+  explicit FederatedComm(std::shared_ptr<FederatedComm const> that)
+      : stub_{that->stub_}, plugin_{that->plugin_} {
     this->rank_ = that->Rank();
     this->world_ = that->World();
 

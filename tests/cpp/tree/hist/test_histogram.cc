@@ -185,7 +185,8 @@ void TestSyncHist(bool is_distributed) {
 
   histogram.Buffer().Reset(1, n_nodes, space, target_hists);
   // sync hist
-  histogram.SyncHistogram(tree.HostScView(), nodes_for_explicit_hist_build, nodes_for_subtraction_trick);
+  histogram.SyncHistogram(tree.HostScView(), nodes_for_explicit_hist_build,
+                          nodes_for_subtraction_trick);
 
   using GHistRowT = common::GHistRow;
   auto check_hist = [](const GHistRowT parent, const GHistRowT left, const GHistRowT right,

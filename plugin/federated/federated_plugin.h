@@ -25,12 +25,14 @@
 
 #include <algorithm>   // for copy_n
 #include <cstdint>     // for uint8_t
+#include <cstring>     // for memcpy
 #include <functional>  // for function
 #include <memory>      // for unique_ptr
 #include <vector>      // for vector
 
 #include "../../src/data/gradient_index.h"  // for GHistIndexMatrix
 #include "xgboost/json.h"                   // for Json
+#include "xgboost/logging.h"                // for CHECK_EQ, LOG
 #include "xgboost/span.h"                   // for Span
 #include "xgboost/string_view.h"            // for StringView
 
@@ -254,15 +256,19 @@ class FederatedPluginMock : public FederatedPluginBase {
   [[nodiscard]] common::Span<std::uint8_t> BuildEncryptedHistHori(
       common::Span<double const> hist) override {
     hist_enc_.resize(hist.size_bytes());
-    std::copy_n(reinterpret_cast<std::uint8_t const *>(hist.data()), hist.size_bytes(),
-                hist_enc_.data());
+    if (!hist.empty()) {
+      std::memcpy(hist_enc_.data(), hist.data(), hist.size_bytes());
+    }
     return hist_enc_;
   }
   [[nodiscard]] common::Span<double> SyncEncryptedHistHori(
       common::Span<std::uint8_t const> hist) override {
-    std::size_t n = hist.size_bytes() / sizeof(double);
+    CHECK_EQ(hist.size() % sizeof(double), 0);
+    std::size_t n = hist.size() / sizeof(double);
     hist_plain_.resize(n);
-    std::copy_n(reinterpret_cast<double const *>(hist.data()), n, hist_plain_.data());
+    if (!hist.empty()) {
+      std::memcpy(hist_plain_.data(), hist.data(), hist.size());
+    }
     return hist_plain_;
   }
 };
@@ -311,7 +317,7 @@ class FederatedPlugin : public FederatedPluginBase {
     return {ptr, n};
   }
   void SyncEncryptedGradient(common::Span<std::uint8_t const> data) override {
-    uint8_t *out;
+    std::uint8_t *out{nullptr};
     std::size_t n{0};
     auto rc = SyncEncrypt_(this->plugin_handle_.get(), data.data(), data.size(), &out, &n);
     CheckRC(rc, "Failed to sync encrypt gradient");

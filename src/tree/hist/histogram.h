@@ -4,18 +4,18 @@
 #ifndef XGBOOST_TREE_HIST_HISTOGRAM_H_
 #define XGBOOST_TREE_HIST_HISTOGRAM_H_
 
-#include <algorithm>   // for max
-#include <cstddef>     // for size_t
-#include <cstdint>     // for int32_t
-#include <utility>     // for move
-#include <variant>     // for variant
-#include <vector>      // for vector
+#include <algorithm>  // for max
+#include <cstddef>    // for size_t
+#include <cstdint>    // for int32_t
+#include <utility>    // for move
+#include <variant>    // for variant
+#include <vector>     // for vector
 
 #include "../../collective/allreduce.h"    // for Allreduce
+#include "../../common/cache_manager.h"    // for CacheManager
 #include "../../common/hist_util.h"        // for GHistRow, ParallelGHi...
 #include "../../common/row_set.h"          // for RowSetCollection
 #include "../../common/threading_utils.h"  // for ParallelFor2d, Range1d, BlockedSpace2d
-#include "../../common/cache_manager.h"    // for CacheManager
 #include "../../data/gradient_index.h"     // for GHistIndexMatrix
 #include "expand_entry.h"                  // for MultiExpandEntry, CPUExpandEntry
 #include "hist_cache.h"                    // for BoundedHistCollection
@@ -56,8 +56,7 @@ static_assert(kHist2F64 == 2);
 // Perform the subtraction trick
 template <typename TreeT>
 inline void SubtractHistParallel(Context const *ctx, common::BlockedSpace2d const &space,
-                                 TreeT const &tree,
-                                 std::vector<bst_node_t> const &nodes_to_build,
+                                 TreeT const &tree, std::vector<bst_node_t> const &nodes_to_build,
                                  std::vector<bst_node_t> const &nodes_to_trick,
                                  common::ParallelGHistBuilder *buffer,
                                  BoundedHistCollection *p_hist) {
@@ -71,8 +70,8 @@ inline void SubtractHistParallel(Context const *ctx, common::BlockedSpace2d cons
   common::ParallelFor2d(subspace, ctx->Threads(), [&](std::size_t nidx_in_set, common::Range1d r) {
     auto subtraction_nidx = nodes_to_trick[nidx_in_set];
     auto parent_id = tree.Parent(subtraction_nidx);
-    auto sibling_nidx = tree.IsLeftChild(subtraction_nidx) ? tree.RightChild(parent_id)
-                                                           : tree.LeftChild(parent_id);
+    auto sibling_nidx =
+        tree.IsLeftChild(subtraction_nidx) ? tree.RightChild(parent_id) : tree.LeftChild(parent_id);
     auto sibling_hist = hist[sibling_nidx];
     auto parent_hist = hist[parent_id];
     auto subtract_hist = hist[subtraction_nidx];
@@ -94,7 +93,7 @@ class HistogramPolicyContainer : public BuildPolicy {
   // Histogram buffers for threads.
   common::ParallelGHistBuilder buffer_;
   BatchParam param_;
-  Context const* ctx_{nullptr};
+  Context const *ctx_{nullptr};
   bool is_col_split_{false};
 
  public:
@@ -232,7 +231,6 @@ class HistogramPolicyContainer : public BuildPolicy {
   auto &Buffer() { return buffer_; }
 };
 
-
 // Build routine for sample-based split.
 template <bool any_missing>
 void BuildSampleHistograms(std::int32_t n_threads, common::BlockedSpace2d const &space,
@@ -263,7 +261,7 @@ class DefaultHistPolicy {
   // Whether XGBoost is running in distributed environment.
   bool is_distributed_{false};
   bool is_col_split_{false};
-  Context const* ctx_{nullptr};
+  Context const *ctx_{nullptr};
 
  public:
   void DoReset(Context const *ctx, bool is_distributed, bool is_col_split) {
@@ -316,9 +314,8 @@ using FedHistogramBuilder = HistogramPolicyContainer<FederatedHistPolicy>;
 template <typename Partitioner>
 common::BlockedSpace2d ConstructHistSpace(Partitioner const &partitioners,
                                           std::vector<bst_node_t> const &nodes_to_build,
-                                          const GHistIndexMatrix &gidx,
-                                          std::size_t l1_size, bst_bin_t max_bin,
-                                          bool read_by_column) {
+                                          const GHistIndexMatrix &gidx, std::size_t l1_size,
+                                          bst_bin_t max_bin, bool read_by_column) {
   // FIXME(jiamingy): Handle different size of space.  Right now we use the maximum
   // partition size for the buffer, which might not be efficient if partition sizes
   // has significant variance.
@@ -344,7 +341,7 @@ common::BlockedSpace2d ConstructHistSpace(Partitioner const &partitioners,
 
   std::size_t space_in_l1_for_rows;
   if (read_by_column) {
-   /* In this case, an accurate block_size estimate is performance-critical.
+    /* In this case, an accurate block_size estimate is performance-critical.
     * For column-wise histogram construction, each column is processed over the
     * same block of rows. If the block fits in L1, the row data are loaded once
     * and reused across all columns; otherwise, the cache must be refilled for
@@ -395,10 +392,9 @@ common::BlockedSpace2d ConstructHistSpace(Partitioner const &partitioners,
   constexpr std::size_t kMinBlockSize = kCacheLineSize / sizeof(GradientPair);
   block_size = std::max<std::size_t>(kMinBlockSize, block_size);
 
-  common::BlockedSpace2d space{
-      nodes_to_build.size(), [&](size_t nidx_in_set) {
-                                return partition_size[nidx_in_set];
-                              }, block_size};
+  common::BlockedSpace2d space{nodes_to_build.size(),
+                               [&](size_t nidx_in_set) { return partition_size[nidx_in_set]; },
+                               block_size};
   return space;
 }
 
@@ -422,7 +418,7 @@ class MultiHistogramBuilder {
     size_t hist_size = 2 * sizeof(double) * nbins;
 
     double l3_per_thread = static_cast<double>(cache_manager_.L3Size()) / ctx_->Threads();
-    double usable_cache_size =  0.8 * (cache_manager_.L2Size() + l3_per_thread);
+    double usable_cache_size = 0.8 * (cache_manager_.L2Size() + l3_per_thread);
     const bool hist_fit_to_l2 = usable_cache_size > hist_size;
 
     /* In row-wise histogram construction, each iteration of the outer (row-wise) loop
@@ -441,7 +437,8 @@ class MultiHistogramBuilder {
  public:
   // Number of targets for histogram building (may differ from tree.NumTargets() for reduced grad)
   [[nodiscard]] bst_target_t NumTargets() const {
-    return std::visit([](auto &&b) { return static_cast<bst_target_t>(b.size()); }, target_builders_);
+    return std::visit([](auto &&b) { return static_cast<bst_target_t>(b.size()); },
+                      target_builders_);
   }
 
   /**
@@ -469,8 +466,8 @@ class MultiHistogramBuilder {
           std::size_t page_idx{0};
           for (auto const &gidx : p_fmat->GetBatches<GHistIndexMatrix>(ctx_, param)) {
             bool read_by_column = ReadByColumn(gidx, force_read_by_column);
-            auto space = ConstructHistSpace(partitioners, nodes, gidx,
-                                            cache_manager_.L1Size(), param.max_bin, read_by_column);
+            auto space = ConstructHistSpace(partitioners, nodes, gidx, cache_manager_.L1Size(),
+                                            param.max_bin, read_by_column);
             for (bst_target_t t{0}; t < n_targets; ++t) {
               auto t_gpair = gpair.Slice(linalg::All(), t);
               target_builders[t].BuildHist(page_idx, space, gidx,
@@ -559,8 +556,7 @@ class MultiHistogramBuilder {
     is_encrypted = collective::IsFederatedEncrypted(ctx);
     if (is_encrypted && !std::get_if<std::vector<FedHistogramBuilder>>(&target_builders_)) {
       target_builders_.emplace<std::vector<FedHistogramBuilder>>(n_targets);
-    } else if (!is_encrypted &&
-               !std::get_if<std::vector<HistogramBuilder>>(&target_builders_)) {
+    } else if (!is_encrypted && !std::get_if<std::vector<HistogramBuilder>>(&target_builders_)) {
       target_builders_.emplace<std::vector<HistogramBuilder>>(n_targets);
     }
 #else
